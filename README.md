@@ -16,14 +16,20 @@ A full-featured, GUI-driven Twitch automation suite that blends live chat modera
 
 ## Quick Start
 1. **Clone & Open:** Pull this repository and open it in VS Code (or your editor of choice).
-2. **Run `start_bot.bat`:** Double-click or execute from PowerShell. The script will:
-   - Create / reuse `venv`.
-   - Install dependencies with `check_requirements.py` (including local ffmpeg binaries).
-   - Scaffold `.env` if it does not exist.
-   - Validate required secrets and, if needed, prompt for Twitch usernames to populate `BOT_ID`/`OWNER_ID` using `tools\fetch_ids.py`.
-   - Launch `gui_main.py` via `pythonw.exe` so only the GUI remains.
-3. **Fill in `.env`:** Enter all required API keys (see sections below). Rerun `start_bot.bat` until the validation step passes.
+2. **Run the launcher:** During development run `python launcher.py`. For stream/production machines, build the bundled executable via `pyinstaller --noconfirm --clean maddieply.spec` (details below) and launch `dist/MaddiePly/MaddiePly.exe`. The launcher will:
+   - Ensure `media/`, `data/`, and `ffmpeg_bin/` exist next to the executable.
+   - Scaffold `.env` from a template when it is missing.
+   - Validate required secrets and prompt for broadcaster/bot usernames so it can fetch `BOT_ID`/`OWNER_ID` automatically.
+   - Hand control over to the Tkinter GUI once validation succeeds.
+3. **Fill in `.env`:** Enter all required API keys (see sections below). Rerun the launcher or packaged executable until the validation step passes.
 4. **Use the GUI:** Configure prompts, commands, hotkeys, and run built-in test events before going live.
+
+## Building the Executable (PyInstaller)
+1. Install PyInstaller into your development environment if you have not already: `pip install pyinstaller`.
+2. From the project root, run `pyinstaller --noconfirm --clean maddieply.spec`.
+3. The build drops a self-contained folder at `dist/MaddiePly/` with `MaddiePly.exe` as the launcher. Keep `media/`, `data/`, and `ffmpeg_bin/` with the executable; the spec already copies your checked-in assets.
+4. Place your `.env` and (optionally) `credentials.json` beside the executable before first launch. If `.env` is missing, the launcher writes a template and exits so you can populate it.
+5. Re-run the build command whenever you change Python dependencies or add new media assets that must ship with the bot.
 
 ## Required Accounts & Secrets
 All secrets live in the repo-level `.env`. Each key maps one-to-one with the instructions below.
@@ -43,8 +49,8 @@ All secrets live in the repo-level `.env`. Each key maps one-to-one with the ins
    ```
 
 ### 2. Bot & Broadcaster IDs
-- When `.env` lacks `BOT_ID` or `OWNER_ID`, `start_bot.bat` runs `tools\fetch_ids.py`, prompting for the bot username and broadcaster username, then writes the numeric IDs automatically.
-- To refresh the IDs later, simply clear those fields in `.env` and rerun the start script.
+- When `.env` lacks `BOT_ID` or `OWNER_ID`, the launcher (`python launcher.py` or the packaged `MaddiePly.exe`) prompts for the bot and broadcaster usernames, calls the Twitch API, and writes the numeric IDs automatically.
+- To refresh the IDs later, clear those fields in `.env` and rerun the launcher so it can fetch them again.
 - Use separate Twitch accounts for bot and broadcaster to ensure moderator/editor scopes work correctly.
 
 ### 3. ElevenLabs (Required)
@@ -87,20 +93,21 @@ If you want Discord announcements, create a Discord bot, copy its token, and set
 
 ## OAuth Authorization Flow
 The bot needs user tokens for both the bot account and the broadcaster account.
-1. Start `gui_main.py` (via `start_bot.bat`). The FastAPI OAuth server listens on `http://localhost:4343`.
-2. While logged in as the **bot account**, visit:
+1. Launch the app via `python launcher.py` or by running the packaged `MaddiePly.exe`. The Tkinter GUI spins up the FastAPI OAuth server on `http://localhost:4343`.
+2. While logged in as the **bot account**, hit Twitch’s authorize endpoint (replace `YOUR_CLIENT_ID` with the value from `.env`):
+
    ```
-   http://localhost:4343/oauth?scopes=user:read:chat%20user:write:chat%20user:bot%20user:manage:whispers%20moderator:manage:banned_users%20moderator:read:followers%20moderator:read:suspicious_users%20moderator:manage:shield_mode%20moderator:manage:shoutouts%20moderator:manage:automod%20moderator:manage:chat_settings%20bits:read&force_verify=true
+   https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=YOUR_CLIENT_ID&redirect_uri=http%3A%2F%2Flocalhost%3A4343%2Foauth&scope=user:read:chat%20user:write:chat%20user:bot%20user:manage:whispers%20moderator:manage:banned_users%20moderator:read:followers%20moderator:read:suspicious_users%20moderator:manage:shield_mode%20moderator:manage:shoutouts%20moderator:manage:automod%20moderator:manage:chat_settings%20bits:read%20channel:read:hype_train&force_verify=true
    ```
-   Approve the consent screen; the GUI logs the returned tokens.
-3. Log out, switch to the **broadcaster account**, and authorize using:
+   Twitch redirects back to `http://localhost:4343/oauth?code=...`; the GUI watches that FastAPI server and stores the token pair automatically.
+3. Log out, switch to the **broadcaster account**, and authorize using the production client ID again:
    ```
-   http://localhost:4343/oauth?scopes=channel:read:subscriptions%20channel:manage:redemptions%20channel:read:charity%20channel:read:goals%20channel:manage:polls%20channel:manage:predictions%20channel:bot%20channel:edit:commercial%20channel:read:ads%20bits:read&force_verify=true
+   https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=YOUR_CLIENT_ID&redirect_uri=http%3A%2F%2Flocalhost%3A4343%2Foauth&scope=channel:read:subscriptions%20channel:manage:redemptions%20channel:read:charity%20channel:read:goals%20channel:manage:polls%20channel:manage:predictions%20channel:bot%20channel:edit:commercial%20channel:read:ads%20bits:read&force_verify=true
    ```
 4. Restart the bot to pick up both token entries. Ensure the bot account has the **Editor** role on the channel so ad/commercial scopes function.
 
 ## Running the Bot Day-to-Day
-1. Double-click `start_bot.bat` to activate the venv, check requirements, and launch the GUI without leaving a console window open.
+1. Double-click `MaddiePly.exe` (from `dist/MaddiePly/`) or run `python launcher.py` while developing. A console window remains open so you can see validation messages, Twitch ID prompts, and tracebacks if anything fails before the GUI starts.
 2. Configure settings, prompts, redemptions, and scheduled messages inside the GUI tabs.
 3. Use the **Testing** tab to simulate Twitch events before going live.
 4. Keep the GUI open during your stream—background managers (Twitch bot, Discord thread, OBS sync, timers) remain active as long as the GUI is running.
