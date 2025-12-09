@@ -12,7 +12,7 @@ from twitchio import eventsub, HTTPException
 from twitchio.ext import commands
 from ai_logic import AssistantManager, AutoMod, ResponseTimer, EventManager, setup_gpt_manager
 from message_scheduler import MessageScheduler
-from tools import debug_print, set_debug, set_reference, get_reference, get_random_number
+from tools import debug_print, set_debug, set_reference, get_reference, get_random_number, path_from_app_root
 from light_discord import DiscordBot
 
 
@@ -147,9 +147,23 @@ class Bot(commands.AutoBot):
             eventsub.AdBreakBeginSubscription(broadcaster_user_id=payload.user_id), #Receives ad break begin events
         ]
 
+        def _subscription_owner(payload: eventsub.SubscriptionPayload) -> str:
+            return (
+                getattr(payload, "broadcaster_user_id", None)
+                or getattr(payload, "user_id", None)
+                or getattr(payload, "to_broadcaster_user_id", None)
+                or getattr(payload, "moderator_user_id", None)
+                or "unknown"
+            )
+
         resp: twitchio.MultiSubscribePayload = await self.multi_subscribe(subs)
+        for payload in subs:
+            owner_id = _subscription_owner(payload)
+            debug_print("AutoBot", f"Subscribed to: {payload.__class__.__name__} for user: {owner_id}")
         if resp.errors:
-            debug_print("AutoBot", f"Failed to subscribe to: {resp.errors}, for users: {payload.user_id}")
+            for error in resp.errors:
+                owner_id = _subscription_owner(error.subscription)
+                debug_print("AutoBot", f"Failed to subscribe to: {error} for user: {owner_id}")
 
     async def add_token(self, token: str, refresh: str) -> twitchio.authentication.ValidateTokenPayload:
         resp: twitchio.authentication.ValidateTokenPayload = await super().add_token(token, refresh)
@@ -1325,9 +1339,9 @@ def testing() -> None:
 
 def main() -> None:
     async def runner() -> None:
-        data_dir = os.path.join(os.path.dirname(__file__), "data")
+        data_dir = path_from_app_root("data")
         os.makedirs(data_dir, exist_ok=True)
-        db_path = os.path.join(data_dir, "maddieply.db")
+        db_path = str(data_dir / "maddieply.db")
         bot_id = os.getenv("BOT_ID", "").strip()
         if not bot_id:
             raise ValueError("BOT_ID environment variable is not set.")

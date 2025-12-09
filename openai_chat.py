@@ -11,24 +11,63 @@ load_dotenv()
 API_KEY = os.getenv("OPENAI_API_KEY")
 BOT_DETECTION_PROMPT = {"role": "system", "content": "You are a twitch moderator who's sole job is to review a chatter's message if it is their first time chatting. You are checking if they are a bot, scammer, or spammer. You will provide a single word response, Yes, No, or Maybe. Saying Yes means you think they are a bot, scammer, or spammer. No means they are not. And Maybe means you will need more context to determine, in which case I will append more of their messages as they come in until you change your answer. Always respond with a single word, Yes, No, Maybe, so that my program can automatically take action depending on your answer."}
 
-def num_of_tokens(messages, model = None):
-  """Returns the number of tokens used by a list of messages.
-  Copied with minor changes from: https://platform.openai.com/docs/guides/chat/managing-tokens """
-  debug_print("OpenAIManager", f"Calculating number of tokens for messages with model: {model}")
-  try:
-      encoding = tiktoken.get_encoding("o200k_base")
-      num_tokens = 0
-      for message in messages:
-          num_tokens += 4  # every message follows <im_start>{role/name}\n{content}<im_end>\n
-          for key, value in message.items():
-              num_tokens += len(encoding.encode(value))
-              if key == "name":  # if there's a name, the role is omitted
-                  num_tokens += -1  # role is always required and always 1 token
-      num_tokens += 2  # every reply is primed with <im_start>assistant
-      return num_tokens
-  except Exception:
-      raise NotImplementedError(f"""[ERROR]num_tokens_from_messages() is not presently implemented for model {model}.
-      #See https://github.com/openai/openai-python/blob/main/chatml.md for information on how messages are converted to tokens.""")
+def num_of_tokens(messages, model: str = "gpt-4o"):
+    """Return the approximate number of tokens for chat messages.
+
+    Falls back to ``cl100k_base`` when the preferred model encoding is unavailable
+    (older tiktoken builds do not ship ``o200k_base`` yet). Accuracy is sufficient
+    for guardrail checks before sending prompts upstream.
+    """
+    debug_print("OpenAIManager", f"Calculating number of tokens for messages with model: {model}")
+
+    def _get_encoding():
+        attempts = [
+            lambda: tiktoken.encoding_for_model(model),
+            lambda: tiktoken.get_encoding("o200k_base"),
+            lambda: tiktoken.get_encoding("cl100k_base"),
+            lambda: tiktoken.get_encoding("p50k_base"),
+            lambda: tiktoken.get_encoding("r50k_base"),
+        ]
+        for factory in attempts:
+            try:
+                return factory()
+            except Exception as exc:
+                debug_print("OpenAIManager", f"Token encoding attempt failed: {exc}")
+
+        class _ApproxEncoding:
+            def encode(self, text):
+                if text is None:
+                    return []
+                length = len(str(text))
+                approx = max(1, length // 4)
+                return [0] * approx
+
+        debug_print("OpenAIManager", "Falling back to approximate token counting.")
+        return _ApproxEncoding()
+
+    encoding = _get_encoding()
+
+    def _encode_length(value) -> int:
+        if value is None:
+            return 0
+        if isinstance(value, str):
+            return len(encoding.encode(value))
+        if isinstance(value, dict):
+            return sum(_encode_length(v) for v in value.values())
+        if isinstance(value, list):
+            return sum(_encode_length(v) for v in value)
+        return len(encoding.encode(str(value)))
+
+    num_tokens = 0
+    for message in messages or []:
+        num_tokens += 4  # every message follows <im_start>{role/name}\n{content}<im_end>\n
+        if isinstance(message, dict):
+            for key, value in message.items():
+                num_tokens += _encode_length(value)
+                if key == "name":
+                    num_tokens -= 1  # role is omitted when name is present
+    num_tokens += 2  # every reply is primed with <im_start>assistant
+    return num_tokens
   
 
 class OpenAiManager:
@@ -60,7 +99,7 @@ class OpenAiManager:
         self.chat_history.append({"role": "system", "content": personality_prompt})
 
     # Asks a question with no chat history
-    def chat(self, messages, conversational: bool, model: str = None) -> str:
+    def chat(self, messages, conversational: bool) -> str:
         debug_print("OpenAIManager", f"Asking chat question without history, conversational={conversational}.")
         if not messages or not isinstance(messages, list):
             print("[ERROR]Didn't receive input!")
@@ -96,7 +135,7 @@ class OpenAiManager:
     
 
     # Asks a question that includes the full conversation history
-    def chat_with_history(self, prompt="", conversational: bool = False, twitch_chat: bool = False, model: str = None) -> str:
+    def chat_with_history(self, prompt="", conversational: bool = False, twitch_chat: bool = False) -> str:
         debug_print("OpenAIManager", f"Asking chat question with history, conversational={conversational}, twitch_chat={twitch_chat}.")
         if not prompt:
             print("[ERROR]Didn't receive input!")

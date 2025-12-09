@@ -6,8 +6,7 @@ import os
 import time
 import azure.cognitiveservices.speech as speechsdk
 import keyboard
-from tools import debug_print, get_debug, get_reference
-from pathlib import Path
+from tools import debug_print, get_debug, get_reference, path_from_app_root
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -33,7 +32,7 @@ class ElevenLabsManager:
         if voice is None:
             voice = self.default_voice
         debug_print("ElevenLabsManager", f"Converting text to audio with voice: {voice}, model: {model}")
-        media_dir = Path(__file__).parent / "media"
+        media_dir = path_from_app_root("media")
         media_dir.mkdir(exist_ok=True)
         audio_dir = media_dir / "voice_audio"
         audio_dir.mkdir(exist_ok=True)
@@ -95,7 +94,7 @@ class SpeechToTextManager:
         if not voice:
             voice = self.azure_speechconfig.speech_synthesis_voice_name # Gets default voice if none passed to method
         # Create the audio directory if it doesn't exist
-        media_dir = Path(__file__).parent / "media"
+        media_dir = path_from_app_root("media")
         media_dir.mkdir(exist_ok=True)
         audio_dir = media_dir / "voice_audio"
         audio_dir.mkdir(exist_ok=True)

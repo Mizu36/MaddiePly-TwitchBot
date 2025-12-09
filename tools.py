@@ -1,7 +1,10 @@
 import datetime
 import random
+import sys
+from pathlib import Path
 from typing import Literal
 DEBUG = False
+_PROJECT_ROOT = Path(__file__).resolve().parent
 TWITCH_BOT = None
 COMMAND_HANDLER = None
 TIMER = None
@@ -46,6 +49,18 @@ def get_random_from_list(items: list):
     if not items:
         return None
     return random.choice(items)
+
+
+def get_app_root() -> Path:
+    """Return the folder that holds runtime data (repo root when unfrozen, exe folder when bundled)."""
+    if getattr(sys, "frozen", False):  # Running under PyInstaller/Freeze
+        return Path(sys.executable).resolve().parent
+    return _PROJECT_ROOT
+
+
+def path_from_app_root(*parts: str) -> Path:
+    """Join paths relative to the runtime root."""
+    return get_app_root().joinpath(*parts)
 
 def set_reference(name: str, reference) -> None:
     """Sets a global reference by name"""

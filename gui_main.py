@@ -28,7 +28,7 @@ from db import (
 )
 from tkinter import simpledialog
 from ai_logic import start_timer_manager_in_background
-from tools import set_debug, debug_print, get_random_number, get_reference
+from tools import set_debug, debug_print, get_random_number, get_reference, path_from_app_root
 from db import get_database_loop
 import typing
 import testing
@@ -74,7 +74,7 @@ def _start_pending_coros_poller(timeout: float = 15.0, poll_interval: float = 0.
 from hotkey_listener import GlobalHotkeyListener, set_global_listener, get_global_listener
 
 
-DB_FILENAME = os.path.join(os.path.dirname(__file__), "data", "maddieply.db")
+DB_FILENAME = str(path_from_app_root("data", "maddieply.db"))
 ELEVEN_LABS_VOICE_MODELS = ["eleven_v3", "eleven_multilingual_v2", "eleven_flash_v2_5", "eleven_flash_v2", "eleven_turbo_v2_5", "eleven_turbo_v2"]
 ELEVEN_LABS_VOICES = []
 AUDIO_DEVICES = []
@@ -2169,11 +2169,11 @@ class DBEditor(tk.Tk):
     def _evaluate_google_credentials(self) -> None:
         """Validate credentials.json and disable Google Sheets integration when invalid."""
         required_keys = ("type", "project_id", "private_key_id", "private_key")
-        credential_path = os.path.join(os.path.dirname(__file__), "credentials.json")
+        credential_path = path_from_app_root("credentials.json")
         is_valid = True
         message = ""
 
-        if not os.path.exists(credential_path):
+        if not credential_path.exists():
             is_valid = False
             message = "Google Sheets credentials.json is missing. Integration disabled until the file is added."
         else:
@@ -4594,8 +4594,6 @@ class DBEditor(tk.Tk):
         # assistant names so the running Assistant picks up any name changes.
         try:
             import ai_logic
-            import asyncio
-            import threading
 
             tm = get_reference("ResponseTimer")
             loop = getattr(ai_logic, "_timer_loop", None)
@@ -4703,8 +4701,7 @@ class DBEditor(tk.Tk):
 
     def clean_up_temp_files(self) -> None:
         """Remove temporary files created during the session."""
-        from pathlib import Path
-        media_dir = Path(__file__).parent / "media"
+        media_dir = path_from_app_root("media")
         memes_dir = media_dir / "memes"
         if memes_dir.exists():
             for file in memes_dir.iterdir():

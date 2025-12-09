@@ -44,8 +44,7 @@ import inspect
 import re
 
 from datetime import datetime
-from pathlib import Path
-from tools import debug_print, get_random_number, get_reference, set_reference
+from tools import debug_print, get_random_number, get_reference, set_reference, path_from_app_root
 from db import get_custom_reward, get_bit_reward, get_prompt, get_setting, get_specific_user_data, set_user_data, increment_user_stat, user_exists, get_specific_user_data
 from meme_creator import make_meme
 from typing import Literal
@@ -204,7 +203,7 @@ class CustomPointRedemptionBuilder():
         self.obs_manager = get_reference("OBSManager")
         self.audio_manager = get_reference("AudioManager")
         self.discord_bot = None
-        self.media_dir = Path(__file__).parent / "media"
+        self.media_dir = path_from_app_root("media")
         self.media_dir.mkdir(exist_ok=True)
         self.images_and_gifs_dir = self.media_dir / "images_and_gifs"
         self.memes_dir = self.media_dir / "memes"

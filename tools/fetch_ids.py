@@ -1,10 +1,17 @@
 import asyncio
-import twitchio
 import os
 from pathlib import Path
+
+import twitchio
 from dotenv import load_dotenv, set_key
 
-ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+try:
+    from tools import path_from_app_root
+except Exception:
+    def path_from_app_root(*parts: str) -> Path:
+        return Path(__file__).resolve().parent.parent.joinpath(*parts)
+
+ENV_PATH = path_from_app_root(".env")
 ENV_FILE = str(ENV_PATH)
 load_dotenv(dotenv_path=ENV_PATH)
 

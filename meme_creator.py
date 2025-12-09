@@ -1,8 +1,8 @@
 import asyncio
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
-from pathlib import Path
 from light_discord import DiscordBot
+from tools import path_from_app_root
 
 #Move center cropping of image to here and save as a temp png
 def center_crop_image(input_img_path: str, output_img_path: str) -> str:
@@ -14,7 +14,7 @@ def center_crop_image(input_img_path: str, output_img_path: str) -> str:
     return output_img_path
 
 def make_meme(input_img_path: str, caption: str, font: str) -> str:
-    media_dir = Path(__file__).parent / "media"
+    media_dir = path_from_app_root("media")
     media_dir.mkdir(exist_ok=True)
     memes_output_dir = media_dir / "memes"
     memes_output_dir.mkdir(exist_ok=True)

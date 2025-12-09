@@ -6,7 +6,7 @@ import asyncio
 import obsws_python as obs
 from contextlib import contextmanager
 from audio_player import AudioManager
-from tools import debug_print
+from tools import debug_print, path_from_app_root
 from db import get_setting, get_location_capture
 
 ##########################################################
@@ -551,7 +551,7 @@ class OBSWebsocketsManager:
             }
         )
 
-        media_root = Path(__file__).resolve().parent / "media"
+        media_root = path_from_app_root("media")
         if is_meme:
             default_path = media_root / "memes" / "test_meme.png"
         else:
@@ -619,7 +619,7 @@ async def tests():
 
 async def meme_creation_workflow():
     manager = OBSWebsocketsManager()
-    media_dir = Path(__file__).parent / "media"
+    media_dir = path_from_app_root("media")
     media_dir.mkdir(exist_ok=True)
     screenshots_dir = media_dir / "screenshots"
     screenshots_dir.mkdir(exist_ok=True)

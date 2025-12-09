@@ -10,7 +10,7 @@ import subprocess
 import soundfile as sf
 from mutagen.mp3 import MP3
 from pathlib import Path
-from tools import debug_print, get_debug
+from tools import debug_print, get_debug, path_from_app_root
 from db import get_setting
 
 if os.name == "nt":
@@ -33,7 +33,7 @@ from local_ffmpeg import install, is_installed
 from pydub import AudioSegment, utils
 
 AUDIO_DEVICES = []
-FFMPEG_DIR = Path(__file__).with_name("ffmpeg_bin")
+FFMPEG_DIR = path_from_app_root("ffmpeg_bin")
 if not is_installed(str(FFMPEG_DIR)):
     ok, msg = install(str(FFMPEG_DIR))
     if not ok:
@@ -465,9 +465,9 @@ class AudioManager:
     
     async def populate_sound_fx_list(self):
         # Scan the 'media/sound_fx' directory for audio files
-        sound_fx_dir = os.path.join(os.path.dirname(__file__), "media", "soundFX")
+        sound_fx_dir = path_from_app_root("media", "soundFX")
         sound_fx_list = []
-        if not os.path.exists(sound_fx_dir):
+        if not sound_fx_dir.exists():
             debug_print("AudioManager", f"Sound effects directory does not exist: {sound_fx_dir}")
             self.list_of_sound_fx = sound_fx_list
             return
@@ -481,7 +481,7 @@ class AudioManager:
         debug_print("AudioManager", f"Populated sound effects list with {len(self.list_of_sound_fx)} items.")
 
     def _sound_fx_directory(self) -> str:
-        return os.path.join(os.path.dirname(__file__), "media", "soundFX")
+        return str(path_from_app_root("media", "soundFX"))
 
     def _find_sound_fx_file(self, sound_fx_name: str) -> str | None:
         sound_fx_dir = self._sound_fx_directory()

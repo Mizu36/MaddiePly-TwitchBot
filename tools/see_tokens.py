@@ -1,12 +1,13 @@
 import asqlite
 import os
+from pathlib import Path
 
-# Use the data/ directory for the database
-data_dir = os.path.join(os.path.dirname(__file__), "data")
-os.makedirs(data_dir, exist_ok=True)
-db_path = os.path.join(data_dir, "maddieply.db")
+# Use the data/ directory for the database next to the project root
+data_dir = Path(__file__).resolve().parent.parent / "data"
+data_dir.mkdir(exist_ok=True)
+db_path = data_dir / "maddieply.db"
 
-conn = asqlite.connect(db_path)
+conn = asqlite.connect(str(db_path))
 cur = conn.cursor()
 
 cur.execute("SELECT * FROM tokens;")

@@ -7,3 +7,6 @@ venv/
 credentials.json
 TODO.txt
 ffmpeg_bin/
+dist/
+build/
+maddieply.spec

@@ -4,7 +4,7 @@ from message_scheduler import MessageScheduler
 from tts import ElevenLabsManager, SpeechToTextManager
 from obs_websockets import OBSWebsocketsManager
 from openai_chat import OpenAiManager
-from tools import get_reference, set_reference, debug_print
+from tools import get_reference, set_reference, debug_print, path_from_app_root
 import random
 import asyncio
 import time
@@ -51,7 +51,7 @@ class AssistantManager():
         if await get_setting("Include Screenshot Context", False):
             random_number = random.randint(1, 100)
             if random_number <= await get_setting("Screenshot Chance Percentage", 0):
-                media_dir = Path(__file__).parent / "media"
+                media_dir = path_from_app_root("media")
                 media_dir.mkdir(exist_ok=True)
                 screenshot_dir = media_dir / "screenshots"
                 screenshot_dir.mkdir(exist_ok=True)
@@ -703,7 +703,7 @@ class EventManager():
         self.assistant: AssistantManager = None
         self.twitch_bot = get_reference("TwitchBot")
         self.builder = get_reference("PointBuilder")
-        self.voice_audio_dir = Path(__file__).parent / "media" / "voice_audio"
+        self.voice_audio_dir = path_from_app_root("media", "voice_audio")
         debug_print("EventManager", "EventManager initialized.")
 
     async def start(self) -> None:
@@ -930,7 +930,7 @@ class EventManager():
         """Clears all events from the queue and played list."""
         debug_print("EventManager", "Clearing all events.")
         #Delete all audio files in voice_audio folder
-        voice_audio_dir = Path(__file__).parent / "media" / "voice_audio"
+        voice_audio_dir = path_from_app_root("media", "voice_audio")
         if self.currently_playing:
             print("[INFO]Waiting for current event to finish before clearing audio files...")
             while self.currently_playing:  
@@ -1139,9 +1139,9 @@ async def test():
     #Set up database so settings can be fetched
     import os
     BOT_ID: str = os.getenv("BOT_ID", "").strip()
-    data_dir = os.path.join(os.path.dirname(__file__), "data")
+    data_dir = path_from_app_root("data")
     os.makedirs(data_dir, exist_ok=True)
-    db_path = os.path.join(data_dir, "maddieply.db")
+    db_path = str(data_dir / "maddieply.db")
     import asqlite
     from db import setup_database
     # Create the database pool and keep it open for the duration of the test.

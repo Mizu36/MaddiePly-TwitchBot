@@ -2,6 +2,7 @@ import subprocess
 import sys
 import os
 from pathlib import Path
+from tools import path_from_app_root
 
 REQ_FILE = "requirements.txt"
 
@@ -56,7 +57,7 @@ def ensure_local_ffmpeg() -> None:
         print("[WARN] local-ffmpeg package missing; skipping FFmpeg binary setup.")
         return
 
-    target = Path(__file__).with_name("ffmpeg_bin")
+    target = path_from_app_root("ffmpeg_bin")
     target.mkdir(exist_ok=True)
     if is_installed(str(target)):
         print(f"✅ Local FFmpeg already present at {target}")

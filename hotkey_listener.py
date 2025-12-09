@@ -20,7 +20,7 @@ except Exception:
 
 import db
 from db import REQUIRED_HOTKEYS
-from tools import debug_print
+from tools import debug_print, path_from_app_root
 
 _GLOBAL_LISTENER = None
 
@@ -224,7 +224,7 @@ class GlobalHotkeyListener:
             # Fallback: try reading the sqlite DB directly so hotkeys can be
             # applied even when the async pool (created by the bot) isn't running.
             try:
-                db_path = os.path.join(os.path.dirname(__file__), "data", "maddieply.db")
+                db_path = path_from_app_root("data", "maddieply.db")
                 if os.path.exists(db_path):
                     conn = sqlite3.connect(db_path)
                     conn.row_factory = sqlite3.Row
