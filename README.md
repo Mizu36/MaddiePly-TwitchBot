@@ -107,7 +107,7 @@ The bot needs user tokens for both the bot account and the broadcaster account.
 4. Restart the bot to pick up both token entries. Ensure the bot account has the **Editor** role on the channel so ad/commercial scopes function.
 
 ## Running the Bot Day-to-Day
-1. Double-click `MaddiePly.exe` (from `dist/MaddiePly/`) or run `python launcher.py` while developing. A console window remains open so you can see validation messages, Twitch ID prompts, and tracebacks if anything fails before the GUI starts.
+1. Double-click `MaddiePly.exe` (from `dist/MaddiePly/`) or run `python launcher.py` while developing. A console window is integrated in the gui so you can see validation messages, Twitch ID prompts, and tracebacks if anything fails before the GUI starts.
 2. Configure settings, prompts, redemptions, and scheduled messages inside the GUI tabs.
 3. Use the **Testing** tab to simulate Twitch events before going live.
 4. Keep the GUI open during your stream—background managers (Twitch bot, Discord thread, OBS sync, timers) remain active as long as the GUI is running.
