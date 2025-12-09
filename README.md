@@ -102,7 +102,7 @@ The bot needs user tokens for both the bot account and the broadcaster account.
    Twitch redirects back to `http://localhost:4343/oauth?code=...`; the GUI watches that FastAPI server and stores the token pair automatically.
 3. Log out, switch to the **broadcaster account**, and authorize using the production client ID again:
    ```
-   https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=YOUR_CLIENT_ID&redirect_uri=http%3A%2F%2Flocalhost%3A4343%2Foauth&scope=channel:read:subscriptions%20channel:manage:redemptions%20channel:read:charity%20channel:read:goals%20channel:manage:polls%20channel:manage:predictions%20channel:bot%20channel:edit:commercial%20channel:read:ads%20bits:read&force_verify=true
+   https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=YOUR_CLIENT_ID&redirect_uri=http%3A%2F%2Flocalhost%3A4343%2Foauth&scope=channel:read:subscriptions%20channel:manage:redemptions%20channel:read:charity%20channel:read:goals%20channel:manage:polls%20channel:manage:predictions%20channel:bot%20channel:edit:commercial%20channel:read:ads%20bits:read%20channel:read:hype_train&force_verify=true
    ```
 4. Restart the bot to pick up both token entries. Ensure the bot account has the **Editor** role on the channel so ad/commercial scopes function.
 
