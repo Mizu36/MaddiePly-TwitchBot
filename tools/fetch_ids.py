@@ -21,7 +21,7 @@ async def main() -> None:
     default_channel = os.getenv("CHANNEL_LOGIN", "")
     default_bot = os.getenv("BOT_LOGIN", "")
 
-    channel_login = input(f"Enter channel username [{default_channel}]: ") or default_channel
+    channel_login = input(f"Enter broadcaster username [{default_channel}]: ") or default_channel
     bot_login = input(f"Enter bot username [{default_bot}]: ") or default_bot
 
     if not channel_login or not bot_login:
