@@ -113,4 +113,4 @@ The bot needs user tokens for both the bot account and the broadcaster account.
 - **Azure Key Delay:** If Azure shows no keys yet, wait a few hours—Microsoft sometimes provisions the Speech resource asynchronously.
 - **Google Sheets Disabled:** When credentials are missing/invalid, related toggles are greyed out with tooltips explaining why.
 
-Happy automating! If you run into issues or have feature ideas, open an issue or start a discussion. 🎉
+If you run into issues or have feature ideas, open an issue.
