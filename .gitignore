@@ -1,0 +1,9 @@
+.env
+.tio.tokens.json
+data/
+__pycache__/
+venv/
+.github/
+credentials.json
+TODO.txt
+ffmpeg_bin/
