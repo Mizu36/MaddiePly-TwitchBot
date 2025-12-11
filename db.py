@@ -50,6 +50,7 @@ REQUIRED_SETTINGS = {
     "Google Sheets Integration Enabled": ("0", "BOOL"),
     "Google Sheets Quotes Sheet ID": ("null", "TEXT"),
     "Shared Chat Chat Responses Enabled": ("0", "BOOL"),
+    "Shared Chat Welcome Messages Enabled": ("0", "BOOL"),
     "Shared Chat Commands Enabled": ("0", "BOOL"),
     "Shared Chat Custom Channel Point Redemptions Enabled": ("0", "BOOL"),
     "Shared Chat Ad Timer Enabled": ("0", "BOOL"),
