@@ -499,7 +499,10 @@ class CustomPointRedemptionBuilder():
         
         user_id = payload.user.id
         if not await user_exists(user_id):
-            date = payload.timestamp.date().strftime("%Y-%m-%d")
+            try:
+                date = payload.timestamp.date().strftime("%Y-%m-%d")
+            except Exception:
+                date = datetime.now().date().strftime("%Y-%m-%d")
             await set_user_data(user_id=user_id, username=payload.user.name, display_name=payload.user.display_name, date_added=date, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0)
         await increment_user_stat(user_id=user_id, stat="points", amount=points)
         custom_reward = await get_custom_reward(redemption_name, "channel_points")
@@ -536,7 +539,10 @@ class CustomPointRedemptionBuilder():
         bits = payload.bits
         user_id = payload.user.id
         if not await user_exists(user_id):
-            date = payload.timestamp.date().strftime("%Y-%m-%d")
+            try:
+                date = payload.timestamp.date().strftime("%Y-%m-%d")
+            except Exception:
+                date = datetime.now().date().strftime("%Y-%m-%d")
             await set_user_data(user_id=user_id, username=payload.user.name, display_name=payload.user.display_name, date_added=date, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0)
         user_data = await get_specific_user_data(user_id=user_id, field="bits_donated")
         override = False
@@ -848,6 +854,8 @@ class CustomPointRedemptionBuilder():
         # %subscribers% for the current subscriber count
         # %title% for the current stream title
         # %game% for the current game being played
+        # %bits% for the number of bits cheered
+        # %message% for the user's input message
         # %rng% for totally random number
         # %rng:min-max% for random number between min and max (inclusive)
         debug_print("CommandHandler", f"Building text for: {text}")
@@ -919,6 +927,12 @@ class CustomPointRedemptionBuilder():
                 try:
                     message = payload.user_input
                     updated_text = updated_text.replace("%message%", message)
+                except Exception:
+                    pass
+            if "%bits%" in updated_text:
+                try:
+                    bits = str(payload.bits)
+                    updated_text = updated_text.replace("%bits%", bits)
                 except Exception:
                     pass
             if "%rng%" in updated_text:
