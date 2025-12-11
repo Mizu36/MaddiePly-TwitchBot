@@ -384,9 +384,9 @@ class DBEditor(tk.Tk):
         # Tabs to create
         self.tables = [
             ("settings", "Settings"),
-            ("prompts", "Prompts"),
             ("commands", "Commands"),
-            ("scheduled_messages", "Scheduled"),
+            ("scheduled_messages", "Scheduled Messages"),
+            ("prompts", "Prompts"),
         ]
 
         self.frames = {}
@@ -1230,6 +1230,37 @@ class DBEditor(tk.Tk):
         except Exception:
             pass
 
+        self._apply_tab_order()
+
+    def _apply_tab_order(self) -> None:
+        """Ensure the Notebook tabs follow the preferred left-to-right order."""
+        try:
+            desired_order = [
+                "Settings",
+                "Event Manager",
+                "Commands",
+                "Scheduled Messages",
+                "Custom Redemption Builder",
+                "Twitch Users",
+                "Randomizer",
+                "Hotkeys",
+                "Prompts",
+                "Tools",
+                "Console",
+            ]
+            existing_tabs = {}
+            for tab_id in self.nb.tabs():
+                label = self.nb.tab(tab_id, "text")
+                # Keep only the first occurrence per label
+                existing_tabs.setdefault(label, tab_id)
+            for index, label in enumerate(desired_order):
+                tab_id = existing_tabs.get(label)
+                if tab_id is None:
+                    continue
+                self.nb.insert(index, tab_id)
+        except Exception as exc:
+            debug_print("GUI", f"Failed to apply tab order: {exc}")
+
     def _schedule_async_task(self, coro: typing.Awaitable[typing.Any] | None, source: str = "GUITesting") -> bool:
         """Attempt to schedule a coroutine on the bot/database loop."""
         if coro is None:
@@ -1406,6 +1437,7 @@ class DBEditor(tk.Tk):
                     "%title% - current stream title\n"
                     "%game% - current game\n"
                     "%message% - message content (if applicable)\n"
+                    "%bits% - number of bits cheered (if applicable)\n"
                     "%rng% - random number\n"
                     "%rng:min-max% - random number between min and max"
                 )
