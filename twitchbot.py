@@ -6,7 +6,7 @@ import random
 from dotenv import load_dotenv
 from custom_channel_point_builder import CustomPointRedemptionBuilder
 from db import setup_database, get_all_commands, get_prompt, get_setting, set_user_data, get_user_data, get_specific_user_data, increment_user_stat, user_exists
-from google_api import add_quote, get_quote, get_random_quote, get_random_quote_containing_word
+from google_api import add_quote, get_quote, get_random_quote, get_random_quote_containing_words
 import asqlite
 from twitchio import eventsub, HTTPException
 from twitchio.ext import commands
@@ -532,12 +532,10 @@ class CommandHandler(commands.Component):
     async def handle_message(self) -> None:
         while True:
             if len(self.message_queue) > 0:
-                if self.shared_chat:
-                    if not await get_setting("Shared Chat Chat Responses Enabled", default=False):
-                        self.message_queue.clear()
-                        await asyncio.sleep(60)
-                        continue
                 payload: twitchio.ChatMessage = self.message_queue.pop(0)
+                if self.shared_chat:
+                    shared_chat_welcome = await get_setting("Shared Chat Welcome Messages Enabled", default=False)
+                    shared_chat_response = await get_setting("Shared Chat Chat Responses Enabled", default=False)
             else:
                 if self.shared_chat:
                     if not await get_setting("Shared Chat Chat Responses Enabled", default=False):
@@ -552,6 +550,8 @@ class CommandHandler(commands.Component):
                 continue
             increment = asyncio.create_task(self.scheduler.increment_message_count())
             if user_name not in self.welcomed_users and user_name not in self.users_to_greet:
+                if self.shared_chat and not shared_chat_welcome:
+                        continue
                 if not self.first_user_greeted:
                     self.first_user_greeted = True
                     user_id = payload.chatter.id
@@ -586,6 +586,8 @@ class CommandHandler(commands.Component):
                     self.users_to_greet.append(user_name)
                     if self.greeting_task is None or self.greeting_task.done():
                         self.greeting_task = asyncio.create_task(self.greet_newcomers())
+            if self.shared_chat and not shared_chat_response:
+                continue
             user_id = payload.chatter.id
             if not await user_exists(user_id=user_id):
                 date = payload.timestamp.date().strftime("%Y-%m-%d")
@@ -623,10 +625,10 @@ class CommandHandler(commands.Component):
                 response = random.choice(["Hello!", "Hi there!", "Hey!", "Greetings!", "Sup!", "Yo!", "Howdy!", "Heyo!", "Hiya!", "Hello there!", 
                                           "Heyo there!", "Hi!", "Heya!", "Greetings and salutations!", "Howdy partner!", "Hey friend!", "Hello friend!", 
                                           "Hi friend!", "Hey buddy!", "Hello buddy!", "Hi buddy!", "Hey pal!", "Hello pal!", "Hi pal!", "Hey mate!", "Hello mate!", 
-                                          "Hi mate!", "Hey champ!", "Hello champ!", "Hi champ!", "Hey superstar!", "Hello superstar!", "Hi superstar!", "Moddi is always getting on back.", 
+                                          "Hi mate!", "Hey champ!", "Hello champ!", "Hi champ!", "Hey superstar!", "Hello superstar!", "Hi superstar!", "Moddi is always getting on my back.", 
                                           "I'm here if you need me!", "Maddie at your service!", "Ready to assist you!", "How can I help you today?", "At your command!", 
                                           "Your friendly bot is here!", "Maddie is listening!", "Here to help!", "Your wish is my command!", "Moddi is on the job!", 
-                                          "Always happy to help!", "Moddi is ready to assist!", "Your personal bot assistant!"])
+                                          "Always happy to help!", "Moddi is ready to assist!", "Your personal bot assistant!", "I'm tired boss."])
                 await self.bot.whisper(payload.sender, response)
                 return
         if message_parts[0].lower() not in self.whisper_commands:
@@ -818,9 +820,6 @@ class CommandHandler(commands.Component):
             print(f"Failed to start ad break: {e}")
 
     async def greet_newcomers(self) -> None:
-        if self.shared_chat:
-            debug_print("CommandHandler", "Greet newcomers task aborted due to Shared Chat mode.")
-            return
         debug_print("CommandHandler", "Starting greet_newcomers task...")
         await asyncio.sleep(30)
         users = []
@@ -1209,13 +1208,21 @@ class CommandHandler(commands.Component):
         #!quote add <quote text>
         #!quote random
         #!quote r
-        #!quote <word>
+        #!quote <word or phrase>
         #!quote <id>
         if self.shared_chat:
             if not await get_setting("Shared Chat Commands Enabled", default=False):
                 debug_print("CommandHandler", "Quote command ignored due to Shared Chat mode.")
                 return
         parts = ctx.message.text.split(maxsplit=2)
+
+        def _format_quote_entry(entry: dict) -> str:
+            quote_id = entry.get("ID") or entry.get("Id") or entry.get("id") or "?"
+            text = entry.get("Quote") or entry.get("quote") or "(No quote text)"
+            date_added = entry.get("Date Added") or entry.get("Date") or "an unknown date"
+            category = entry.get("Category") or "Unknown"
+            return f"Quote #{quote_id}: \"{text}\" - Added on {date_added} during a {category} stream."
+
         if len(parts) < 2:
             await ctx.send("Usage: !quote add <quote text> | !quote random | !quote <id> | !quote <word>")
             return
@@ -1227,35 +1234,71 @@ class CommandHandler(commands.Component):
             if not quote_text:
                 await ctx.send("Quote text cannot be empty.")
                 return
-            author = getattr(ctx, "author", None)
-            user = author.name if author and hasattr(author, "name") else "Unknown"
-            quote_id = add_quote(user, quote_text)
+            author = ctx.author
+            user = author.name if author else "Unknown"
+            try:
+                category = await self.bot.get_current_game()
+            except Exception:
+                category = "Just Chatting"
+            try:
+                quote_id = await add_quote(user, quote_text, category)
+            except ValueError as exc:
+                print(str(exc))
+                return
+            except Exception as exc:
+                print(f"Failed to add quote: {exc}")
+                await ctx.send("Unable to add quote right now. Please try again later.")
+                return
             await ctx.send(f"Quote added with ID #{quote_id}.")
             return
         elif parts[1].lower() in ("random", "r"):
-            quote = get_random_quote()
+            try:
+                quote = await get_random_quote()
+            except ValueError as exc:
+                await ctx.send(str(exc))
+                return
+            except Exception as exc:
+                print(f"Failed to fetch random quote: {exc}")
+                await ctx.send("Unable to fetch a random quote right now. Please try again later.")
+                return
             if not quote:
                 await ctx.send("No quotes exist.")
                 return
-            await ctx.send(f"Quote #{quote["ID"]}: \"{quote["Quote"]}\" - Added on {quote["Date Added"]} during a {quote["Category"]} stream.")
+            await ctx.send(_format_quote_entry(quote))
             return
         else:
-            identifier = parts[1].strip()
+            identifier = " ".join(parts[1:]).strip()
             if identifier.isdigit():
                 quote_id = int(identifier)
-                quote = get_quote(quote_id)
+                try:
+                    quote = await get_quote(quote_id)
+                except ValueError as exc:
+                    await ctx.send(str(exc))
+                    return
+                except Exception as exc:
+                    print(f"Failed to fetch quote #{quote_id}: {exc}")
+                    await ctx.send("Unable to fetch that quote right now. Please try again later.")
+                    return
                 if not quote:
                     await ctx.send(f"No quote found with ID #{quote_id}.")
                     return
-                await ctx.send(f"Quote #{quote["ID"]}: \"{quote["Quote"]}\" - Added on {quote["Date Added"]} during a {quote["Category"]} stream.")
+                await ctx.send(_format_quote_entry(quote))
                 return
             else:
                 word = identifier
-                quote = get_random_quote_containing_word(word)
-                if not quote:
-                    await ctx.send(f"No quotes found containing the word '{word}'.")
+                try:
+                    quote = await get_random_quote_containing_words(identifier)
+                except ValueError as exc:
+                    await ctx.send(str(exc))
                     return
-                await ctx.send(f"Quote #{quote["ID"]}: \"{quote["Quote"]}\" - Added on {quote["Date Added"]} during a {quote["Category"]} stream.")
+                except Exception as exc:
+                    print(f"Failed to search quotes for '{word}': {exc}")
+                    await ctx.send("Unable to search quotes right now. Please try again later.")
+                    return
+                if not quote:
+                    await ctx.send(f"No quotes found containing the word(s) '{word}'.")
+                    return
+                await ctx.send(_format_quote_entry(quote))
                 return
 
 
