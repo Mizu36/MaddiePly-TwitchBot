@@ -34,8 +34,8 @@ async def add_quote(user, quote_text: str, category = "Just Chatting"):
     sheet = open_sheet(quotes_sheet_id)
     quotes = sheet.get_all_records()
     new_id = len(quotes) + 1  # unique number
-    quote_text = quote_text.capitalize()
-    if not quote_text.endswith(".") or not quote_text.endswith("!") or not quote_text.endswith("?"):
+    quote_text = quote_text.strip().capitalize()
+    if not quote_text.endswith((".", "!", "?")):
         quote_text += "."
     sheet.append_row([new_id, quote_text, datetime.datetime.now().strftime("%Y-%m-%d"), user, category])
     return new_id
@@ -43,6 +43,8 @@ async def add_quote(user, quote_text: str, category = "Just Chatting"):
 async def get_quote(quote_id):
     debug_print("GoogleAPI", f"Getting quote {quote_id} from google sheet.")
     quotes_sheet_id = await get_setting("Google Sheets Quotes Sheet ID")
+    if not quotes_sheet_id:
+        raise ValueError("Google Sheets Quotes Sheet ID is not set in the settings.")
     sheet = open_sheet(quotes_sheet_id)
     quotes = sheet.get_all_records()
     for q in quotes:
@@ -53,6 +55,8 @@ async def get_quote(quote_id):
 async def get_random_quote():
     debug_print("GoogleAPI", "Getting a random quote from google sheet.")
     quotes_sheet_id = await get_setting("Google Sheets Quotes Sheet ID")
+    if not quotes_sheet_id:
+        raise ValueError("Google Sheets Quotes Sheet ID is not set in the settings.")
     sheet = open_sheet(quotes_sheet_id)
     quotes = sheet.get_all_records()
     if not quotes:
@@ -60,12 +64,14 @@ async def get_random_quote():
     random_quote = random.choice(quotes)
     return random_quote
 
-async def get_random_quote_containing_word(word):
-    debug_print("GoogleAPI", f"Searching for a quote with the word '{word}' in the google sheet.")
+async def get_random_quote_containing_words(words: str):
+    debug_print("GoogleAPI", f"Searching for a quote with the words '{words}' in the google sheet.")
     quotes_sheet_id = await get_setting("Google Sheets Quotes Sheet ID")
+    if not quotes_sheet_id:
+        raise ValueError("Google Sheets Quotes Sheet ID is not set in the settings.")
     sheet = open_sheet(quotes_sheet_id)
     quotes = sheet.get_all_records()
-    filtered_quotes = [q for q in quotes if word.lower() in q["Quote"].lower()]
+    filtered_quotes = [q for q in quotes if words.lower() in q["Quote"].lower()]
     if not filtered_quotes:
         return None
     random_quote = random.choice(filtered_quotes)
