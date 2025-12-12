@@ -41,13 +41,16 @@ This would generate an automatic voiced response saying "Hello [username], thank
 "2": {"method1": method_reference1, "method2": method_reference2, "input1": "input value from db or user or None", "input2": "input value from db or user or None"}, ...}"""
 import asyncio
 import inspect
+import os
 import re
+import tempfile
 
 from datetime import datetime
 from tools import debug_print, get_random_number, get_reference, set_reference, path_from_app_root
 from db import get_custom_reward, get_bit_reward, get_prompt, get_setting, get_specific_user_data, set_user_data, increment_user_stat, user_exists, get_specific_user_data
 from meme_creator import make_meme
 from typing import Literal
+from PIL import Image, ImageDraw, ImageFont
 
 
 USER_INPUT_PLACEHOLDER = "<user_input>"
@@ -210,6 +213,9 @@ class CustomPointRedemptionBuilder():
         self.screenshots_dir = self.media_dir / "screenshots"
         self.sounds_dir = self.media_dir / "soundFX"
         self.voice_audio_dir = self.media_dir / "voice_audio"
+        self.voice_audio_dir.mkdir(parents=True, exist_ok=True)
+        self.voice_overlay_template = self.images_and_gifs_dir / "speaker.png"
+        self._overlay_font_dir = path_from_app_root("media", "fonts")
         self.code_decryption_map = {"AV": self.automatic_voiced_response,
                                     "AI": self.ai_generated_voiced_response,
                                     "API": self.ai_generated_voiced_response_personality,
@@ -360,6 +366,329 @@ class CustomPointRedemptionBuilder():
         except Exception:
             return None
         return duration_sec
+
+    def _display_name_from_payload(self, payload) -> str:
+        username = "Viewer"
+        if not payload:
+            return username
+        try:
+            user = payload.user
+        except Exception:
+            user = None
+        if user is not None:
+            username = user.display_name
+        return str(username)
+
+    def _estimate_voice_overlay_duration(self, audio_path: str | None, message: str | None) -> float:
+        duration = None
+        if self.audio_manager and audio_path:
+            try:
+                duration = self.audio_manager._compute_audio_duration(audio_path)
+            except Exception:
+                duration = None
+        if duration is None:
+            text = (message or "").strip()
+            approx_words = max(1, len(text.split()))
+            duration = max(4.0, min(30.0, approx_words * 0.6))
+        return float(duration + 0.75)
+
+    async def _start_voiced_overlay(self, payload, message: str, audio_path: str | None):
+        manager = self.obs_manager or get_reference("OBSManager")
+        if manager is None or not audio_path:
+            return None
+        self.obs_manager = manager
+        username = self._display_name_from_payload(payload)
+        overlay_path = await self._render_voice_overlay_image(username, message, payload)
+        if not overlay_path:
+            return None
+        duration = self._estimate_voice_overlay_duration(audio_path, message)
+        ready_event = asyncio.Event()
+        overlay_task = asyncio.create_task(
+            self._run_voice_overlay_task(overlay_path, duration, ready_event)
+        )
+        return ready_event, overlay_task
+
+    async def _run_voice_overlay_task(self, overlay_path: str, duration: float, ready_event: asyncio.Event | None):
+        manager = self.obs_manager or get_reference("OBSManager")
+        if manager is None:
+            try:
+                os.remove(overlay_path)
+            except Exception:
+                pass
+            return
+        self.obs_manager = manager
+        try:
+            object_name = await get_setting("OBS TTS Display Object Name", "TTSDisplay")
+        except Exception:
+            object_name = "TTSDisplay"
+        if not object_name:
+            object_name = "TTSDisplay"
+        try:
+            await manager.display_meme(
+                overlay_path,
+                is_meme=False,
+                duration=duration,
+                ready_event=ready_event,
+                ready_opacity=0.92,
+                object_name_override=object_name,
+            )
+        finally:
+            try:
+                os.remove(overlay_path)
+            except Exception:
+                pass
+
+    async def _render_voice_overlay_image(self, username: str, message: str, payload) -> str | None:
+        overlay_text = (message or "").strip()
+        payload_text = None
+        if payload is not None:
+            try:
+                payload_text = getattr(payload, "user_input", None)
+            except Exception:
+                payload_text = None
+            if not payload_text:
+                try:
+                    payload_text = getattr(payload, "message", None)
+                except Exception:
+                    payload_text = None
+        if isinstance(payload_text, str) and payload_text.strip():
+            overlay_text = payload_text.strip()
+
+        bits_amount = None
+        if payload is not None:
+            try:
+                bits_amount = getattr(payload, "bits", None)
+            except Exception:
+                bits_amount = None
+            if not bits_amount:
+                try:
+                    message_obj = getattr(payload, "message", None)
+                    bits_amount = getattr(message_obj, "bits", None)
+                except Exception:
+                    bits_amount = None
+        header_text = f"{username or 'Viewer'} says:"
+        if bits_amount not in (None, 0):
+            try:
+                bits_display = int(bits_amount)
+            except Exception:
+                bits_display = bits_amount
+            header_text = f"{username or 'Viewer'} donated {bits_display} bits:"
+            overlay_text = re.sub(r"(?i)\\bcheer\\d+\\b", "", overlay_text).strip()
+
+        try:
+            return await asyncio.to_thread(
+                self._compose_voice_overlay_image,
+                username,
+                overlay_text,
+                header_text,
+            )
+        except Exception as exc:
+            debug_print("CustomBuilder", f"Failed to compose voice overlay image: {exc}")
+            return None
+
+    def _compose_voice_overlay_image(self, username: str, message: str, header_text: str) -> str:
+        canvas = None
+        width, height = 960, 420
+        canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(canvas, "RGBA")
+        padding = max(32, canvas.width // 30)
+
+        speaker_path = self.images_and_gifs_dir / "speaker.png"
+        icon_bottom = padding
+        if speaker_path.exists():
+            try:
+                with Image.open(speaker_path) as icon_img_src:
+                    icon_img = icon_img_src.convert("RGBA")
+                max_icon_width = int(canvas.width * 0.4)
+                max_icon_height = int(canvas.height * 0.35)
+                scale_w = max_icon_width / icon_img.width if icon_img.width else 1.0
+                scale_h = max_icon_height / icon_img.height if icon_img.height else 1.0
+                scale = min(scale_w, scale_h, 1.0)
+                new_w = max(1, int(icon_img.width * scale))
+                new_h = max(1, int(icon_img.height * scale))
+                resample_attr = getattr(Image, "Resampling", None)
+                resample_filter = resample_attr.LANCZOS if resample_attr else getattr(Image, "LANCZOS", Image.BICUBIC)
+                icon_resized = icon_img.resize((new_w, new_h), resample=resample_filter)
+                icon_x = (canvas.width - new_w) // 2
+                icon_y = padding
+                shadow_offset = max(2, new_w // 60)
+                try:
+                    icon_alpha = icon_resized.split()[3]
+                except Exception:
+                    icon_alpha = None
+                if icon_alpha is not None:
+                    shadow_image = Image.new("RGBA", icon_resized.size, (255, 255, 255, 160))
+                    canvas.paste(shadow_image, (icon_x + shadow_offset, icon_y + shadow_offset), icon_alpha)
+                canvas.paste(icon_resized, (icon_x, icon_y), icon_resized)
+                icon_bottom = icon_y + new_h
+            except Exception:
+                icon_bottom = padding
+
+        header_line = header_text or f"{username or 'Viewer'} says:"
+        parts = header_line.split(" ", 1)
+        username_only = parts[0]
+        remainder = f" {parts[1]}" if len(parts) > 1 else ""
+        header_len = len(header_line)
+        if header_len <= 24:
+            header_target = max(36, canvas.width // 22)
+        elif header_len <= 48:
+            header_target = max(30, canvas.width // 26)
+        else:
+            header_target = max(26, canvas.width // 30)
+        header_font = self._load_overlay_font(header_target, bold=True)
+        header_size = getattr(header_font, "size", header_target)
+        header_y = icon_bottom + max(12, padding // 3)
+        header_width = self._measure_text(draw, header_line, header_font)
+        header_x = max(padding, (canvas.width - header_width) / 2)
+        shadow_color = (0, 0, 0, 200)
+        shadow_offset = max(2, header_target // 18)
+        draw.text((header_x + shadow_offset, header_y + shadow_offset), header_line, font=header_font, fill=shadow_color)
+        username_width = self._measure_text(draw, username_only, header_font)
+        username_color = (70, 125, 255, 255)
+        draw.text((header_x, header_y), username_only, font=header_font, fill=username_color)
+        draw.text((header_x + username_width, header_y), remainder, font=header_font, fill=(255, 255, 255, 255))
+
+        message_text = (message or "").strip() or "(No message provided)"
+        char_count = len(message_text.replace("\n", ""))
+        if char_count <= 45:
+            body_target = max(34, canvas.width // 24)
+            words_per_line = 4
+        elif char_count <= 120:
+            body_target = max(28, canvas.width // 30)
+            words_per_line = 7
+        else:
+            body_target = max(22, canvas.width // 34)
+            words_per_line = 10
+        body_font = self._load_overlay_font(body_target)
+        body_size = getattr(body_font, "size", body_target)
+        available_width = int(canvas.width * 0.88)
+        text_y = header_y + header_size + max(14, header_size // 4)
+        bottom_padding = padding
+        remaining_height = canvas.height - text_y - bottom_padding
+        approx_line_height = body_size + max(8, int(body_size * 0.25))
+        max_lines = max(2, int(remaining_height // approx_line_height))
+        wrapped_lines = self._wrap_overlay_lines(
+            message_text,
+            body_font,
+            available_width,
+            draw,
+            max_lines,
+            max_words_per_line=words_per_line,
+        )
+        line_spacing = max(8, int(body_size * 0.25))
+        for line in wrapped_lines:
+            line_width = self._measure_text(draw, line, body_font)
+            line_x = max(padding, (canvas.width - line_width) / 2)
+            draw.text((line_x + shadow_offset, text_y + shadow_offset), line, font=body_font, fill=shadow_color)
+            draw.text((line_x, text_y), line, font=body_font, fill=(255, 255, 255, 255))
+            text_y += body_size + line_spacing
+
+        output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png", dir=self.voice_audio_dir)
+        temp_path = output_file.name
+        output_file.close()
+        canvas.save(temp_path)
+        return temp_path
+
+    def _load_overlay_font(self, size: int, bold: bool = False):
+        candidates: list[str] = []
+        if bold:
+            candidates.extend(["Montserrat-SemiBold.ttf", "SegoeUI-Semibold.ttf", "arialbd.ttf"])
+        else:
+            candidates.extend(["Montserrat-Regular.ttf", "SegoeUI.ttf", "arial.ttf"])
+        if self._overlay_font_dir and self._overlay_font_dir.exists():
+            for name in list(candidates):
+                path = self._overlay_font_dir / name
+                if path.exists():
+                    try:
+                        return ImageFont.truetype(str(path), size=size)
+                    except Exception:
+                        continue
+        for name in candidates:
+            try:
+                return ImageFont.truetype(name, size=size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    def _wrap_overlay_lines(
+        self,
+        message: str | None,
+        font,
+        max_width: int,
+        draw: ImageDraw.ImageDraw,
+        max_lines: int,
+        *,
+        max_words_per_line: int | None = None,
+    ) -> list[str]:
+        text = (message or "").strip() or "(No message provided)"
+        paragraphs = text.splitlines() or [text]
+        lines: list[str] = []
+        truncated = False
+        for paragraph in paragraphs:
+            words = paragraph.split()
+            if not words:
+                if len(lines) < max_lines:
+                    lines.append("")
+                else:
+                    truncated = True
+                continue
+            current_words: list[str] = []
+            for word in words:
+                candidate_words = current_words + [word]
+                candidate_text = " ".join(candidate_words)
+                exceeds_word_limit = (
+                    max_words_per_line is not None
+                    and current_words
+                    and len(candidate_words) > max_words_per_line
+                )
+                exceeds_width = (
+                    current_words
+                    and self._measure_text(draw, candidate_text, font) > max_width
+                )
+                if exceeds_word_limit or exceeds_width:
+                    lines.append(" ".join(current_words))
+                    current_words = [word]
+                    if len(lines) >= max_lines:
+                        truncated = True
+                        break
+                else:
+                    current_words = candidate_words
+            if len(lines) >= max_lines:
+                truncated = True
+                break
+            if current_words:
+                lines.append(" ".join(current_words))
+                if len(lines) >= max_lines and len(words) > len(current_words):
+                    truncated = True
+                    break
+        if not lines:
+            lines = [text]
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+            truncated = True
+        if truncated and lines:
+            last = lines[-1]
+            ellipsis = "…"
+            while self._measure_text(draw, last + ellipsis, font) > max_width and last:
+                last = last[:-1]
+            lines[-1] = (last.rstrip() + ellipsis) if last else ellipsis
+        return lines
+
+    def _measure_text(self, draw: ImageDraw.ImageDraw, text: str, font) -> int:
+        try:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            return bbox[2] - bbox[0]
+        except Exception:
+            try:
+                if hasattr(font, "getlength"):
+                    return int(font.getlength(text))
+            except Exception:
+                pass
+            try:
+                size = font.getsize(text)
+                return size[0]
+            except Exception:
+                return len(text) * max(1, getattr(font, "size", 12))
 
     def _display_fade_in_delay(self) -> float:
         """Retrieve the OBS fade-in delay so audio can align with media visibility."""
@@ -1351,7 +1680,7 @@ class CustomPointRedemptionBuilder():
         execute: bool = True,
         cache_key: str | None = None,
     ):
-        """Uses Azure TTS to read out loud a message (no assistant animation)."""
+        """Uses Azure TTS to read out loud a message and display a chat-style overlay."""
         debug_print("CustomBuilder", f"Generating voiced message for: {message}.")
         cache = self._get_cached_asset(event, cache_key)
         if cache is None:
@@ -1368,12 +1697,52 @@ class CustomPointRedemptionBuilder():
                 return None
             cache = {"kind": "voice_message", "audio": output, "voice": voice}
             self._store_cached_asset(event, cache_key, cache)
+
         if execute or event is None:
             if not self.audio_manager:
                 self.audio_manager = get_reference("AudioManager")
+
+            overlay_ready = None
+            overlay_task = None
+            audio_path = cache.get("audio") if isinstance(cache, dict) else None
+            if audio_path and self.audio_manager:
+                overlay_result = await self._start_voiced_overlay(payload, message, audio_path)
+                if overlay_result:
+                    overlay_ready, overlay_task = overlay_result
+
+            if overlay_ready is not None:
+                wait_timeout = 3.0
+                if self.obs_manager:
+                    try:
+                        wait_timeout = max(0.5, float(self.obs_manager.get_display_fade_in_delay()) + 0.75)
+                    except Exception:
+                        wait_timeout = 3.0
+                try:
+                    await asyncio.wait_for(overlay_ready.wait(), timeout=wait_timeout)
+                except asyncio.TimeoutError:
+                    pass
+
             delete_after = event is None
             volume = await get_setting("Azure TTS Volume", 100)
-            self.audio_manager.play_audio(cache.get("audio"), delete_file=delete_after, volume=volume, play_using_music=False)
+            if self.audio_manager:
+                self.audio_manager.play_audio(
+                    audio_path,
+                    delete_file=delete_after,
+                    volume=volume,
+                    play_using_music=False,
+                )
+            else:
+                print("[WARN] AudioManager not available; cannot play voiced message.")
+
+            if overlay_task:
+                def _overlay_done(task: asyncio.Task):
+                    try:
+                        task.result()
+                    except Exception as exc:
+                        debug_print("CustomBuilder", f"Voice overlay task encountered an error: {exc}")
+
+                overlay_task.add_done_callback(_overlay_done)
+
         return cache
 
     async def timeout(self, data, *, payload=None, event=None):

@@ -58,7 +58,7 @@ class OBSWebsocketsManager:
             return float(self.display_fade_in_seconds)
         except Exception:
             return self.FADE_STEPS * self.FADE_STEP_INTERVAL
-
+        
     async def set_assistant_locations(self) -> bool:
         """Sets the onscreen and offscreen locations of the assistant object"""
         debug_print("OBSWebsocketsManager", "Setting local variables for onscreen and offscreen locations.")
@@ -385,16 +385,23 @@ class OBSWebsocketsManager:
                 }
             )
             
-    async def display_meme(self, path: str, is_meme: bool = True, duration: float = None, ready_event=None, ready_opacity: float | None = None):
+    async def display_meme(self, path: str, is_meme: bool = True, duration: float = None, ready_event=None, ready_opacity: float | None = None, object_name_override: str | None = None):
         current_scene = self.ws.get_current_program_scene().current_program_scene_name
         scene_items = self.ws.get_scene_item_list(current_scene)
         scene_item_id = None
-        if is_meme:
+        if object_name_override:
+            object_name = object_name_override
+            fade_out_delay = duration if duration is not None else 5.0
+        elif is_meme:
             object_name = await get_setting("OBS Meme Object Name", "MemeDisplay")
             fade_out_delay = duration if duration is not None else 10.0
         else:
             object_name = await get_setting("OBS GIF Placeholder Object Name", "GIFDisplay")
             fade_out_delay = 5.0
+
+        if not object_name:
+            print("[ERROR]No OBS source configured for display_meme.")
+            return
 
         for item in scene_items.scene_items:
             if item["sourceName"] == object_name:
@@ -407,8 +414,15 @@ class OBSWebsocketsManager:
         
         # Set the meme image path. Use absolute path and ensure file exists.
         abs_path = os.path.abspath(path)
+        if object_name_override:
+            asset_label = "overlay"
+        elif is_meme:
+            asset_label = "Meme image"
+        else:
+            asset_label = "GIF"
+
         if not os.path.exists(abs_path):
-            print(f"[ERROR] {"Meme image" if is_meme else "GIF"} not found: {abs_path}")
+            print(f"[ERROR] {asset_label} not found: {abs_path}")
             return
         
         used_input_api = True
@@ -552,7 +566,9 @@ class OBSWebsocketsManager:
         )
 
         media_root = path_from_app_root("media")
-        if is_meme:
+        if object_name_override:
+            default_path = media_root / "images_and_gifs" / "test_tts.png"
+        elif is_meme:
             default_path = media_root / "memes" / "test_meme.png"
         else:
             default_path = media_root / "images_and_gifs" / "test_anime.gif"
