@@ -1312,6 +1312,8 @@ class CustomPointRedemptionBuilder():
             if use == "viewer" and user_id:
                 voice = await get_specific_user_data(user_id=user_id, field="tts_voice")
             else:
+                voice = None
+            if not voice:
                 voice = await get_setting("Azure TTS Backup Voice", None)
             output = self.azure_manager.text_to_speech(text=text, voice=voice)
             if not output:

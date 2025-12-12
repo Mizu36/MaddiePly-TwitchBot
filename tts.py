@@ -93,6 +93,7 @@ class SpeechToTextManager:
         debug_print("AzureTTS", f"Synthesizing speech for text: {text}")
         if not voice:
             voice = self.azure_speechconfig.speech_synthesis_voice_name # Gets default voice if none passed to method
+        self.set_voice(voice)
         # Create the audio directory if it doesn't exist
         media_dir = path_from_app_root("media")
         media_dir.mkdir(exist_ok=True)
