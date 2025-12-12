@@ -255,7 +255,7 @@ class PayloadFactory:
         if getattr(reward, "is_user_input_required", False):
             user_input_default = "Custom reward input"
         if user_input_default is None:
-            user_input_default = "susandstanky For allowing me to test!"
+            user_input_default = "How many licks does it take to get to the center of a Tootsie Pop?"
         return _build_payload(
             {
                 "id": overrides.pop("id", f"redemption_{randint(1000,9999)}"),
