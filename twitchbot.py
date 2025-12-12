@@ -487,10 +487,37 @@ class CommandHandler(commands.Component):
         # %user% - user's display name
         # %channel% - channel name
         # %rng% - random number between 1 and 100
-        # %rng:min:max% - random number between min and max (inclusive)
+        # %rng:min:max% - random number between min and max (inclusive), compatible with user input, example %rng:%input1%:%input2%%
+        # %input#% - input number, use to grab single or multiple inputs seperated by commas in command (e.g. !command arg1,arg2,arg3, used as %input1%, %input2%, %input3%)
         debug_print("CommandHandler", f"Building command response for: {response}.")
         updated_response = response
         if "%" in updated_response:
+            if "%input" in updated_response:
+                import re
+                pattern = r"%input(\d+)%"
+                matches = re.findall(pattern, updated_response)
+                input_args = []
+                try:
+                    message_content = ctx.message.text
+                    if message_content:
+                        parts = message_content.split(maxsplit=1)
+                        if len(parts) > 1:
+                            raw_inputs = parts[1]
+                            input_args = [segment.strip() for segment in raw_inputs.split(",")]
+                except Exception:
+                    pass
+                if not input_args:
+                    num_of_required_inputs = len(matches)
+                    updated_response = f"This command requires {num_of_required_inputs} input arguments. Please provide them separated by commas."
+                for match in matches:
+                    try:
+                        index = int(match) - 1
+                        if 0 <= index < len(input_args):
+                            updated_response = updated_response.replace(f"%input{match}%", input_args[index].strip())
+                        else:
+                            updated_response = updated_response.replace(f"%input{match}%", "")
+                    except Exception:
+                        pass
             if "%bot%" in updated_response:
                 try:
                     updated_response = updated_response.replace("%bot%", self.bot.user.name.capitalize())

@@ -3516,6 +3516,7 @@ class DBEditor(tk.Tk):
                 "%channel% - channel name",
                 "%rng% - random number between 1 and 100",
                 "%rng:min:max% - random number between min and max (inclusive)",
+                "%input#% - text following the command in the user's message, replace # with number (e.g. %input1% for first input), inputs seperated by commas in command usage",
             ]
             hint_text = "\n".join(hint_lines)
             ttk.Label(
@@ -3678,7 +3679,7 @@ class DBEditor(tk.Tk):
                                 pass
                             messagebox.showerror("Save", "Command name must be a single word (no spaces).", parent=dlg)
                             return
-                        reserved_names = {"so", "shoutout", "quote"}
+                        reserved_names = {"so", "shoutout", "quote", "rng"}
                         if cmd.lower() in reserved_names:
                             try:
                                 dlg.lift(); dlg.focus_force()
@@ -3686,7 +3687,7 @@ class DBEditor(tk.Tk):
                                 pass
                             messagebox.showerror(
                                 "Save",
-                                "Commands !so, !shoutout, and !quote are built-in and cannot be recreated.",
+                                "Commands !so, !shoutout, !quote, and !rng are built-in and cannot be recreated.",
                                 parent=dlg,
                             )
                             return
