@@ -229,7 +229,6 @@ class PayloadFactory:
         return _build_payload(
             {
                 "from_broadcaster": overrides.pop("from_broadcaster", _fake_broadcaster("RaidLeader")),
-                "viewers": viewers,
                 "viewer_count": viewer_count,
             },
             overrides,
