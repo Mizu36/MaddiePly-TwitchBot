@@ -409,7 +409,7 @@ class CommandHandler(commands.Component):
         current_commands_val = self.shared_chat_commands
         self.shared_chat_commands = await get_setting("Shared Chat Commands Enabled", default=False)
         self.shared_chat_message_scheduler = await get_setting("Shared Chat Scheduled Messages Enabled", default=False)
-        self.scheduler.set_shared_chat(self.shared_chat_message_scheduler)
+        self.scheduler.shared_chat_enabled = self.shared_chat_message_scheduler
         if current_commands_val != self.shared_chat_commands:
             register_all_commands()
 
@@ -961,7 +961,7 @@ class CommandHandler(commands.Component):
         asyncio.create_task(self.custom_builder.handle_cheer(payload))
 
     @commands.Component.listener()
-    async def event_channel_subscribe(self, payload: twitchio.ChannelSubscribe) -> None:
+    async def event_subscription(self, payload: twitchio.ChannelSubscribe) -> None:
         debug_print("CommandHandler", f"Handling subscription from {payload.user.display_name}, gift: {payload.gift}")
         if payload.gift:
             self.assistant.recent_gifted_subscriptions.append(payload.user.display_name)
@@ -970,43 +970,49 @@ class CommandHandler(commands.Component):
         asyncio.create_task(self.assistant.generate_voiced_response(event))
 
     @commands.Component.listener()
-    async def event_channel_subscribe_message(self, payload: twitchio.ChannelSubscriptionMessage) -> None:
+    async def event_subscription_message(self, payload: twitchio.ChannelSubscriptionMessage) -> None:
         debug_print("CommandHandler", f"Handling resubscription from {payload.user.display_name}, months: {payload.months}")
         event = {"type": "resub", "user": payload.user.display_name, "event": payload}
         asyncio.create_task(self.assistant.generate_voiced_response(event))
 
     @commands.Component.listener()
-    async def event_channel_subscription_end(self, payload: twitchio.ChannelSubscriptionEnd) -> None:
+    async def event_subscription_end(self, payload: twitchio.ChannelSubscriptionEnd) -> None:
         debug_print("CommandHandler", f"User subscription ended: {payload.user.display_name}")
         event = {"type": "unsub", "user": payload.user.display_name, "event": payload}
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_channel_follow(self, payload: twitchio.ChannelFollow) -> None:
+    async def event_follow(self, payload: twitchio.ChannelFollow) -> None:
         debug_print("CommandHandler", f"New follower: {payload.user.display_name}")
         event = {"type": "follow", "user": payload.user.display_name, "event": payload}
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_channel_raid(self, payload: twitchio.ChannelRaid) -> None:
+    async def event_raid(self, payload: twitchio.ChannelRaid) -> None:
         debug_print("CommandHandler", f"Handling raid from {payload.from_broadcaster.display_name} with {payload.viewer_count} viewers")
         event = {"type": "raid", "user": payload.from_broadcaster.display_name, "event": payload}
         asyncio.create_task(self.assistant.generate_voiced_response(event))
 
     @commands.Component.listener()
-    async def event_channel_gift_subscription(self, payload: twitchio.ChannelSubscriptionGift) -> None:
+    async def event_subscription_gift(self, payload: twitchio.ChannelSubscriptionGift) -> None:
         debug_print("CommandHandler", f"Handling gifted subscription from {payload.user.display_name}.")
         event = {"type": "gift", "user": payload.user.display_name, "event": payload}
         asyncio.create_task(self.assistant.generate_voiced_response(event))
 
     @commands.Component.listener()
-    async def event_channel_points_auto_redeem_v2(self, payload: twitchio.ChannelPointsAutoRedeemAdd) -> None:
-        debug_print("CommandHandler", f"Handling channel points auto redeem from {payload.user.display_name} for reward {payload.reward.type}")
+    async def event_automatic_redemption_add(self, payload: twitchio.ChannelPointsAutoRedeemAdd) -> None:
+        debug_print(
+            "CommandHandler",
+            f"Handling automatic channel points redeem from {payload.user.display_name} for reward {payload.reward.type}",
+        )
         asyncio.create_task(self.handle_custom_channel_points_redeems(payload))
 
     @commands.Component.listener()
-    async def event_channel_points_redeem_add(self, payload: twitchio.ChannelPointsRedemptionAdd) -> None:
-        debug_print("CommandHandler", f"Handling channel points redeem from {payload.user.display_name} for reward {payload.reward.title}")
+    async def event_custom_redemption_add(self, payload: twitchio.ChannelPointsRedemptionAdd) -> None:
+        debug_print(
+            "CommandHandler",
+            f"Handling custom channel points redeem from {payload.user.display_name} for reward {payload.reward.title}",
+        )
         asyncio.create_task(self.handle_custom_channel_points_redeems(payload))
 
     @commands.Component.listener()
@@ -1015,16 +1021,16 @@ class CommandHandler(commands.Component):
         asyncio.create_task(self.handle_suspicious_message(payload))
 
     @commands.Component.listener()
-    async def event_shared_chat_session_begin(self, payload: twitchio.SharedChatSessionBegin) -> None:
+    async def event_shared_chat_begin(self, payload: twitchio.SharedChatSessionBegin) -> None:
         asyncio.create_task(self.toggle_shared_chat(shared=True))
 
     @commands.Component.listener()
-    async def event_shared_chat_session_update(self, payload: twitchio.SharedChatSessionUpdate) -> None:
+    async def event_shared_chat_update(self, payload: twitchio.SharedChatSessionUpdate) -> None:
         debug_print("CommandHandler", "Updated Shared Chat mode.")
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_shared_chat_session_end(self, payload: twitchio.SharedChatSessionEnd) -> None:
+    async def event_shared_chat_end(self, payload: twitchio.SharedChatSessionEnd) -> None:
         asyncio.create_task(self.toggle_shared_chat(shared=False))
 
     @commands.Component.listener()
@@ -1068,7 +1074,7 @@ class CommandHandler(commands.Component):
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_hype_train_begin(self, payload: twitchio.HypeTrainBegin) -> None:
+    async def event_hype_train(self, payload: twitchio.HypeTrainBegin) -> None:
         debug_print("CommandHandler", f"Hype train began for broadcaster: {payload.broadcaster.display_name}")
         pass #Not implemented
 
@@ -1083,37 +1089,37 @@ class CommandHandler(commands.Component):
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_channel_poll_begin(self, payload: twitchio.ChannelPollBegin) -> None:
+    async def event_poll_begin(self, payload: twitchio.ChannelPollBegin) -> None:
         debug_print("CommandHandler", f"Channel poll began for broadcaster: {payload.broadcaster.display_name}")
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_channel_poll_progress(self, payload: twitchio.ChannelPollProgress) -> None:
+    async def event_poll_progress(self, payload: twitchio.ChannelPollProgress) -> None:
         debug_print("CommandHandler", f"Channel poll progress for broadcaster: {payload.broadcaster.display_name}")
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_channel_poll_end(self, payload: twitchio.ChannelPollEnd) -> None:
+    async def event_poll_end(self, payload: twitchio.ChannelPollEnd) -> None:
         debug_print("CommandHandler", f"Channel poll ended for broadcaster: {payload.broadcaster.display_name}")
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_channel_prediction_begin(self, payload: twitchio.ChannelPredictionBegin) -> None:
+    async def event_prediction_begin(self, payload: twitchio.ChannelPredictionBegin) -> None:
         debug_print("CommandHandler", f"Channel prediction began for broadcaster: {payload.broadcaster.display_name}")
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_channel_prediction_progress(self, payload: twitchio.ChannelPredictionProgress) -> None:
+    async def event_prediction_progress(self, payload: twitchio.ChannelPredictionProgress) -> None:
         debug_print("CommandHandler", f"Channel prediction progress for broadcaster: {payload.broadcaster.display_name}")
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_channel_prediction_lock(self, payload: twitchio.ChannelPredictionLock) -> None:
+    async def event_prediction_lock(self, payload: twitchio.ChannelPredictionLock) -> None:
         debug_print("CommandHandler", f"Channel prediction locked for broadcaster: {payload.broadcaster.display_name}")
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_channel_prediction_end(self, payload: twitchio.ChannelPredictionEnd) -> None:
+    async def event_prediction_end(self, payload: twitchio.ChannelPredictionEnd) -> None:
         debug_print("CommandHandler", f"Channel prediction ended for broadcaster: {payload.broadcaster.display_name}")
         pass #Not implemented
 
@@ -1143,17 +1149,13 @@ class CommandHandler(commands.Component):
         pass #Not implemented
 
     @commands.Component.listener()
-    async def event_ad_break_begin(self, payload: twitchio.ChannelAdBreakBegin) -> None:
+    async def event_ad_break(self, payload: twitchio.ChannelAdBreakBegin) -> None:
         debug_print("CommandHandler", f"Ad break began for broadcaster: {payload.broadcaster.display_name}")
         pass #Not implemented
 
     def _dispatch_whisper_payload(self, payload: twitchio.Whisper) -> None:
         debug_print("CommandHandler", f"Whisper received from user: {payload.sender.display_name}: {payload.text}")
         asyncio.create_task(self.handle_whisper(payload))
-
-    @commands.Component.listener()
-    async def event_whisper_received(self, payload: twitchio.Whisper) -> None:
-        self._dispatch_whisper_payload(payload)
 
     @commands.Component.listener()
     async def event_message_whisper(self, payload: twitchio.Whisper) -> None:
