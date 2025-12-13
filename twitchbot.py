@@ -199,6 +199,7 @@ class Bot(commands.AutoBot):
         return channel.game_name
     
     async def get_game(self, partial_user: twitchio.PartialUser) -> str:
+        debug_print("AutoBot", f"Fetching game for user ID: {partial_user.id}")
         channel = await partial_user.fetch_channel_info()
         return channel.game_name
     
@@ -364,6 +365,12 @@ class CommandHandler(commands.Component):
         self.event_manager: EventManager = get_reference("EventManager")
         self.audio_manager = None
         self.shared_chat = False
+        self.shared_chat_welcome = False
+        self.shared_chat_response = False
+        self.shared_chat_channel_points = False
+        self.shared_chat_ad = False
+        self.shared_chat_commands = False
+        self.shared_chat_message_scheduler = False
         self.greeting_task = None
         self.message_queue = []
         self.message_timer = None
@@ -382,6 +389,7 @@ class CommandHandler(commands.Component):
         self.discord_bot.start_bot_background()
         self.custom_builder = None
         asyncio.create_task(self.start_custom_builder())
+        asyncio.create_task(self.set_shared_chat_settings())
         asyncio.create_task(self.event_manager.start())
         debug_print("CommandHandler", "CommandHandler initialized.")
 
@@ -392,6 +400,18 @@ class CommandHandler(commands.Component):
     def get_message_history(self):
         debug_print("CommandHandler", f"Sending message history from Twitch bot.")
         return self.message_history
+    
+    async def set_shared_chat_settings(self):
+        self.shared_chat_welcome = await get_setting("Shared Chat Welcome Messages Enabled", default=False)
+        self.shared_chat_response = await get_setting("Shared Chat Chat Responses Enabled", default=False)
+        self.shared_chat_channel_points = await get_setting("Shared Chat Custom Channel Point Redemptions Enabled", default=False)
+        self.shared_chat_ad = await get_setting("Shared Chat Ad Timer Enabled", default=False)
+        current_commands_val = self.shared_chat_commands
+        self.shared_chat_commands = await get_setting("Shared Chat Commands Enabled", default=False)
+        self.shared_chat_message_scheduler = await get_setting("Shared Chat Scheduled Messages Enabled", default=False)
+        self.scheduler.set_shared_chat(self.shared_chat_message_scheduler)
+        if current_commands_val != self.shared_chat_commands:
+            register_all_commands()
 
     async def make_discord_announcement(self, message: str) -> None:
         if not self.discord_bot:
@@ -559,15 +579,17 @@ class CommandHandler(commands.Component):
     async def handle_message(self) -> None:
         while True:
             if len(self.message_queue) > 0:
+                debug_print("CommandHandler", f"Processing message queue; {len(self.message_queue)} messages pending.")
                 payload: twitchio.ChatMessage = self.message_queue.pop(0)
                 if self.shared_chat:
-                    shared_chat_welcome = await get_setting("Shared Chat Welcome Messages Enabled", default=False)
-                    shared_chat_response = await get_setting("Shared Chat Chat Responses Enabled", default=False)
+                    debug_print("CommandHandler", "Processing message in shared chat mode.")
             else:
                 if self.shared_chat:
-                    if not await get_setting("Shared Chat Chat Responses Enabled", default=False):
+                    if not self.shared_chat_response and not self.shared_chat_welcome:
                         await asyncio.sleep(60)
                         continue
+                    else:
+                        await asyncio.sleep(1)
                 await asyncio.sleep(.5)
                 continue
             user_name = payload.chatter.name
@@ -575,46 +597,47 @@ class CommandHandler(commands.Component):
                 continue
             if payload.text.startswith(self.prefix):
                 continue
-            increment = asyncio.create_task(self.scheduler.increment_message_count())
-            if user_name not in self.welcomed_users and user_name not in self.users_to_greet:
-                if self.shared_chat and not shared_chat_welcome:
-                        continue
-                if not self.first_user_greeted:
-                    self.first_user_greeted = True
-                    user_id = payload.chatter.id
-                    chime_enabled = await get_setting("First Chat of Stream Chime Enabled", True)
-                    if chime_enabled:
-                        try:
-                            soundFX = await get_specific_user_data(user_id=user_id, field="sound_fx")
-                            if soundFX == "off":
-                                debug_print("CommandHandler", f"Sound FX is turned off for user {user_name}.")
-                            elif soundFX == "on":
-                                if not self.audio_manager:
-                                    self.audio_manager = get_reference("AudioManager")
-                                asyncio.create_task(self.audio_manager.play_random_sound_fx())
-                            elif soundFX not in [None, "", "None", "null", "none", "NULL"]:
-                                if not self.audio_manager:
-                                    self.audio_manager = get_reference("AudioManager")
-                                asyncio.create_task(self.audio_manager.play_sound_fx_by_name(soundFX))
-                            else:
-                                if not self.audio_manager:
-                                    self.audio_manager = get_reference("AudioManager")
-                                asyncio.create_task(self.audio_manager.play_random_sound_fx())
-                        except Exception as e:
-                            debug_print("CommandHandler", f"Error fetching sound FX for user {user_name}: {e}")
-                    self.welcomed_users.append(user_name)
-                    prompt = await get_prompt("Personality Prompt")
-                    prompt += f"\nYour first task is to welcome {payload.chatter.display_name} as the first person to show up to work today at ModdCorp. Make it short and sweet, but still in character as MaddiePly. Respond in only 1 sentence."
-                    if not self.assistant:
-                        self.assistant = get_reference("AssistantManager")
-                    response = await self.assistant.general_response(prompt)
-                    await self.bot.send_chat(response)
-                else:
-                    self.users_to_greet.append(user_name)
-                    if self.greeting_task is None or self.greeting_task.done():
-                        self.greeting_task = asyncio.create_task(self.greet_newcomers())
-            if self.shared_chat and not shared_chat_response:
-                continue
+            increment = None
+            if not self.shared_chat or self.shared_chat_message_scheduler:
+                increment = asyncio.create_task(self.scheduler.increment_message_count())
+            if not self.shared_chat or self.shared_chat_welcome:
+                if user_name not in self.welcomed_users and user_name not in self.users_to_greet:
+                    if not self.first_user_greeted:
+                        self.first_user_greeted = True
+                        user_id = payload.chatter.id
+                        chime_enabled = await get_setting("First Chat of Stream Chime Enabled", True)
+                        if chime_enabled:
+                            try:
+                                soundFX = await get_specific_user_data(user_id=user_id, field="sound_fx")
+                                if soundFX == "off":
+                                    debug_print("CommandHandler", f"Sound FX is turned off for user {user_name}.")
+                                elif soundFX == "on":
+                                    if not self.audio_manager:
+                                        self.audio_manager = get_reference("AudioManager")
+                                    asyncio.create_task(self.audio_manager.play_random_sound_fx())
+                                elif soundFX not in [None, "", "None", "null", "none", "NULL"]:
+                                    if not self.audio_manager:
+                                        self.audio_manager = get_reference("AudioManager")
+                                    asyncio.create_task(self.audio_manager.play_sound_fx_by_name(soundFX))
+                                else:
+                                    if not self.audio_manager:
+                                        self.audio_manager = get_reference("AudioManager")
+                                    asyncio.create_task(self.audio_manager.play_random_sound_fx())
+                            except Exception as e:
+                                debug_print("CommandHandler", f"Error fetching sound FX for user {user_name}: {e}")
+                        self.welcomed_users.append(user_name)
+                        prompt = await get_prompt("Personality Prompt")
+                        prompt += f"\nYour first task is to welcome {payload.chatter.display_name} as the first person to show up to work today at ModdCorp. Make it short and sweet, but still in character as MaddiePly. Respond in only 1 sentence."
+                        if not self.assistant:
+                            self.assistant = get_reference("AssistantManager")
+                        response = await self.assistant.general_response(prompt)
+                        await self.bot.send_chat(response)
+                    else:
+                        self.users_to_greet.append(user_name)
+                        if self.greeting_task is None or self.greeting_task.done():
+                            self.greeting_task = asyncio.create_task(self.greet_newcomers())
+            else:
+                debug_print("CommandHandler", f"Skipping welcome for {user_name} due to shared chat settings.")
             user_id = payload.chatter.id
             if not await user_exists(user_id=user_id):
                 date = payload.timestamp.date().strftime("%Y-%m-%d")
@@ -627,12 +650,18 @@ class CommandHandler(commands.Component):
                 #Updated display name or username if they've changed.
                 await set_user_data(user_id=user_id, username=payload.chatter.name, display_name=payload.chatter.display_name)
             await increment_user_stat(user_id=user_id, stat="messages")
+            if self.shared_chat and not self.shared_chat_response:
+                debug_print("CommandHandler", f"Skipping message processing for {user_name} due to shared chat settings.")
+                if increment:
+                    await increment
+                continue
             message = payload.text
             time = payload.timestamp.time().strftime("%Y-%m-%d %H:%M:%S")
             self.message_history.append({"user": user_name, "message": message, "time": payload.timestamp.time()})
             if len(self.message_history) > 50:
                 self.message_history.pop(0)
-            await increment
+            if increment:
+                await increment
             await self.response_manager.handle_message(user_name, message, time)
 
     async def handle_whisper(self, payload: twitchio.Whisper) -> None:
@@ -801,11 +830,13 @@ class CommandHandler(commands.Component):
 
     async def handle_custom_channel_points_redeems(self, payload: twitchio.ChannelPointsRedemptionAdd | twitchio.ChannelPointsAutoRedeemAdd) -> None:
         if isinstance(payload, twitchio.ChannelPointsAutoRedeemAdd):
+            type = "auto"
             debug_print("CommandHandler", f"Handling auto channel points redeem from {payload.user.display_name}: {payload.reward.type}")
         elif isinstance(payload, twitchio.ChannelPointsRedemptionAdd):
+            type = "custom"
             debug_print("CommandHandler", f"Handling custom channel points from {payload.user.display_name}: {payload.reward.title}")
         if self.shared_chat:
-            if not await get_setting("Shared Chat Custom Channel Point Redemptions Enabled", default=False):
+            if not self.shared_chat_channel_points:
                 debug_print("CommandHandler", "Channel points handler task aborted due to Shared Chat mode.")
                 asyncio.create_task(payload.refund(token_for=self.bot.owner_id))
                 asyncio.create_task(self.bot.send_chat(f"@{payload.user.display_name}, channel point redemptions are disabled in Shared Chat mode. Your redemption has been refunded."))
@@ -813,14 +844,14 @@ class CommandHandler(commands.Component):
         if not self.custom_builder:
             self.custom_builder = CustomPointRedemptionBuilder()
             set_reference("PointBuilder", self.custom_builder)
-        asyncio.create_task(self.custom_builder.channel_points_redemption_handler(payload))
+        asyncio.create_task(self.custom_builder.channel_points_redemption_handler(payload, type))
     
     async def ad_timer(self) -> None:
         while True:
             if await get_setting("Auto Ad Enabled"):
                 if self.shared_chat:
-                    if not await get_setting("Shared Chat Ad Timer Enabled", default=False):
-                        debug_print("CommandHandler", "Ad timer task aborted due to Shared Chat mode.")
+                    if not self.shared_chat_ad:
+                        debug_print("CommandHandler", "Ad timer task aborted due to Shared Chat mode. Waiting for 60 seconds before rechecking.")
                         await asyncio.sleep(60)
                         continue
                 ad_interval = await get_setting("Ad Interval (minutes)", default="15")
@@ -878,9 +909,9 @@ class CommandHandler(commands.Component):
         self.shared_chat = shared
         if shared:
             unregister_all_commands()
-            if not self.message_timer:
-                self.message_timer = get_reference("MessageScheduler")
-            self.message_timer.set_shared_chat(True)
+            if not self.scheduler:
+                self.scheduler: MessageScheduler = get_reference("MessageScheduler")
+            self.scheduler.set_shared_chat(True)
             chat_response_enabled = await get_setting("Chat Response Enabled", False)
             if chat_response_enabled:
                 if not self.response_manager:
@@ -888,9 +919,9 @@ class CommandHandler(commands.Component):
                 await self.response_manager.end_timer()
         else:
             register_all_commands()
-            if not self.message_timer:
-                self.message_timer = get_reference("MessageScheduler")
-            self.message_timer.set_shared_chat(False)
+            if not self.scheduler:
+                self.scheduler: MessageScheduler = get_reference("MessageScheduler")
+            self.scheduler.set_shared_chat(False)
             chat_response_enabled = await get_setting("Chat Response Enabled", False)
             if chat_response_enabled:
                 if not self.response_manager:
@@ -916,8 +947,9 @@ class CommandHandler(commands.Component):
 
     @commands.Component.listener()
     async def event_message(self, payload: twitchio.ChatMessage) -> None:
-        if not self.message_timer or self.message_timer.done():
+        if not self.message_timer: #Initialize the message handler task if it doesn't exist
             self.message_timer = asyncio.create_task(self.handle_message())
+        debug_print("CommandHandler", f"Received message from {payload.chatter.display_name}.")
         self.message_queue.append(payload)
 
     @commands.Component.listener()
@@ -957,7 +989,7 @@ class CommandHandler(commands.Component):
 
     @commands.Component.listener()
     async def event_channel_raid(self, payload: twitchio.ChannelRaid) -> None:
-        debug_print("CommandHandler", f"Handling raid from {payload.from_broadcaster.display_name} with {payload.viewers} viewers")
+        debug_print("CommandHandler", f"Handling raid from {payload.from_broadcaster.display_name} with {payload.viewer_count} viewers")
         event = {"type": "raid", "user": payload.from_broadcaster.display_name, "event": payload}
         asyncio.create_task(self.assistant.generate_voiced_response(event))
 
@@ -1238,7 +1270,7 @@ class CommandHandler(commands.Component):
         #!quote <word or phrase>
         #!quote <id>
         if self.shared_chat:
-            if not await get_setting("Shared Chat Commands Enabled", default=False):
+            if not self.shared_chat_commands:
                 debug_print("CommandHandler", "Quote command ignored due to Shared Chat mode.")
                 return
         parts = ctx.message.text.split(maxsplit=2)
@@ -1333,7 +1365,7 @@ class CommandHandler(commands.Component):
     async def custom(self, ctx: commands.Context) -> None:
         # Determine the alias the user invoked (e.g. 'test') — ctx.command.name is the handler name.
         if self.shared_chat:
-            if not await get_setting("Shared Chat Commands Enabled", default=False):
+            if not self.shared_chat_commands:
                 debug_print("CommandHandler", "Custom commands ignored due to Shared Chat mode.")
                 return
         debug_print("CommandHandler", f"Custom commands method entered! Context: {ctx}")
