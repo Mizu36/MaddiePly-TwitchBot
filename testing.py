@@ -380,28 +380,28 @@ async def test_channel_cheer(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener("event_cheer", PayloadFactory.channel_cheer, **overrides)
 
 async def test_channel_subscribe(**overrides: Any) -> SimpleNamespace:
-    return await _invoke_listener("event_channel_subscribe", PayloadFactory.channel_subscribe, **overrides)
+    return await _invoke_listener("event_subscription", PayloadFactory.channel_subscribe, **overrides)
 
 async def test_channel_subscribe_message(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_subscribe_message", PayloadFactory.channel_subscribe_message, **overrides
+        "event_subscription_message", PayloadFactory.channel_subscribe_message, **overrides
     )
 
 async def test_channel_subscription_end(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_subscription_end", PayloadFactory.channel_subscription_end, **overrides
+        "event_subscription_end", PayloadFactory.channel_subscription_end, **overrides
     )
 
 async def test_channel_follow(**overrides: Any) -> SimpleNamespace:
-    return await _invoke_listener("event_channel_follow", PayloadFactory.channel_follow, **overrides)
+    return await _invoke_listener("event_follow", PayloadFactory.channel_follow, **overrides)
 
 
 async def test_channel_raid(**overrides: Any) -> SimpleNamespace:
-    return await _invoke_listener("event_channel_raid", PayloadFactory.channel_raid, **overrides)
+    return await _invoke_listener("event_raid", PayloadFactory.channel_raid, **overrides)
 
 async def test_channel_subscription_gift(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_gift_subscription", PayloadFactory.channel_subscription_gift, **overrides
+        "event_subscription_gift", PayloadFactory.channel_subscription_gift, **overrides
     )
 
 async def test_gift_subscription_bundle(**overrides: Any) -> None:
@@ -411,7 +411,7 @@ async def test_gift_subscription_bundle(**overrides: Any) -> None:
     subscribe_overrides = overrides.pop("subscribe_overrides", {}) or {}
 
     await _invoke_listener(
-        "event_channel_gift_subscription",
+        "event_subscription_gift",
         PayloadFactory.channel_subscription_gift,
         **gift_overrides,
     )
@@ -426,7 +426,7 @@ async def test_gift_subscription_bundle(**overrides: Any) -> None:
         user = _fake_user(display_name=spec.get("display_name", "GiftedViewer"), login=spec.get("login"))
         payload_kwargs = {**subscribe_overrides, "user": user, "gift": True}
         await _invoke_listener(
-            "event_channel_subscribe",
+            "event_subscription",
             PayloadFactory.channel_subscribe,
             **payload_kwargs,
         )
@@ -436,13 +436,13 @@ async def test_gift_subscription_bundle(**overrides: Any) -> None:
 
 async def test_channel_points_redeem(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_points_redeem_add", PayloadFactory.channel_points_redemption, **overrides
+        "event_custom_redemption_add", PayloadFactory.channel_points_redemption, **overrides
     )
 
 
 async def test_channel_points_auto_redeem(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_points_auto_redeem_v2", PayloadFactory.channel_points_auto_redeem, **overrides
+        "event_automatic_redemption_add", PayloadFactory.channel_points_auto_redeem, **overrides
     )
 
 
@@ -456,19 +456,19 @@ async def test_suspicious_user_message(**overrides: Any) -> SimpleNamespace:
 
 async def test_shared_chat_session_begin(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_shared_chat_session_begin", PayloadFactory.shared_chat_event, **overrides
+        "event_shared_chat_begin", PayloadFactory.shared_chat_event, **overrides
     )
 
 
 async def test_shared_chat_session_update(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_shared_chat_session_update", PayloadFactory.shared_chat_event, **overrides
+        "event_shared_chat_update", PayloadFactory.shared_chat_event, **overrides
     )
 
 
 async def test_shared_chat_session_end(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_shared_chat_session_end", PayloadFactory.shared_chat_event, **overrides
+        "event_shared_chat_end", PayloadFactory.shared_chat_event, **overrides
     )
 
 
@@ -519,7 +519,7 @@ async def test_goal_end(**overrides: Any) -> SimpleNamespace:
 # Hype train ------------------------------------------------------------------
 
 async def test_hype_train_begin(**overrides: Any) -> SimpleNamespace:
-    return await _invoke_listener("event_hype_train_begin", PayloadFactory.broadcaster_event, **overrides)
+    return await _invoke_listener("event_hype_train", PayloadFactory.broadcaster_event, **overrides)
 
 
 async def test_hype_train_progress(**overrides: Any) -> SimpleNamespace:
@@ -535,42 +535,42 @@ async def test_hype_train_end(**overrides: Any) -> SimpleNamespace:
 # Polls -----------------------------------------------------------------------
 
 async def test_channel_poll_begin(**overrides: Any) -> SimpleNamespace:
-    return await _invoke_listener("event_channel_poll_begin", PayloadFactory.channel_poll, **overrides)
+    return await _invoke_listener("event_poll_begin", PayloadFactory.channel_poll, **overrides)
 
 
 async def test_channel_poll_progress(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_poll_progress", PayloadFactory.channel_poll, **overrides
+        "event_poll_progress", PayloadFactory.channel_poll, **overrides
     )
 
 
 async def test_channel_poll_end(**overrides: Any) -> SimpleNamespace:
-    return await _invoke_listener("event_channel_poll_end", PayloadFactory.channel_poll, **overrides)
+    return await _invoke_listener("event_poll_end", PayloadFactory.channel_poll, **overrides)
 
 
 # Predictions -----------------------------------------------------------------
 
 async def test_channel_prediction_begin(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_prediction_begin", PayloadFactory.channel_prediction, **overrides
+        "event_prediction_begin", PayloadFactory.channel_prediction, **overrides
     )
 
 
 async def test_channel_prediction_progress(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_prediction_progress", PayloadFactory.channel_prediction, **overrides
+        "event_prediction_progress", PayloadFactory.channel_prediction, **overrides
     )
 
 
 async def test_channel_prediction_lock(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_prediction_lock", PayloadFactory.channel_prediction, **overrides
+        "event_prediction_lock", PayloadFactory.channel_prediction, **overrides
     )
 
 
 async def test_channel_prediction_end(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
-        "event_channel_prediction_end", PayloadFactory.channel_prediction, **overrides
+        "event_prediction_end", PayloadFactory.channel_prediction, **overrides
     )
 
 
@@ -607,4 +607,4 @@ async def test_automod_message_hold(**overrides: Any) -> SimpleNamespace:
 
 
 async def test_ad_break_begin(**overrides: Any) -> SimpleNamespace:
-    return await _invoke_listener("event_ad_break_begin", PayloadFactory.ad_break, **overrides)
+    return await _invoke_listener("event_ad_break", PayloadFactory.ad_break, **overrides)
