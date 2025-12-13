@@ -592,7 +592,7 @@ def close_database_sync(timeout: float = 5.0, wait: bool = True) -> None:
     except Exception:
         pass
 
-async def get_setting(key: str, default = ""):
+async def get_setting(key: str, default: Any = None) -> Any:
     """Get a setting value by key, returning default if not found."""
     debug_print("Database", f"Fetching setting for key '{key}'.")
     async with DATABASE.acquire() as connection:
