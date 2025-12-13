@@ -817,12 +817,12 @@ class CustomPointRedemptionBuilder():
             except Exception:
                 return None
 
-    async def channel_points_redemption_handler(self, payload) -> None:
+    async def channel_points_redemption_handler(self, payload, type: Literal["custom", "auto"]) -> None:
         # Determine redemption name depending on payload type, determined by if reward has title attribute or type attribute
-        if hasattr(payload.reward, "type"):
+        if type == "auto":
             redemption_name = payload.reward.type
             points = payload.reward.channel_points
-        else:
+        elif type == "custom":
             redemption_name = payload.reward.title
             points = payload.reward.cost
         
