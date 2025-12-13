@@ -916,7 +916,7 @@ async def remove_randomizer_entry(entry_id: int) -> None:
         )
 
 async def get_custom_reward(reward_name: str, reward_type: str) -> dict:
-    """Retrieve one custom reward."""
+    """Retrieve one custom reward. If not found, cancel silently."""
     debug_print("Database", f"Fetching custom reward: {reward_name}.")
     async with DATABASE.acquire() as connection:
         cursor = await connection.execute(
@@ -926,7 +926,7 @@ async def get_custom_reward(reward_name: str, reward_type: str) -> dict:
         row = await cursor.fetchone()
         if row:
             return dict(row)
-    raise ValueError(f"Custom reward '{reward_name}' not found for type '{reward_type}'.")
+    return None
 
 async def get_list_of_custom_rewards(reward_type: str) -> List[dict]:
     """Get a list of names of all custom rewards of a given type."""
