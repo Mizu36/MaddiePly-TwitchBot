@@ -300,7 +300,9 @@ class AssistantManager():
             if not self.twitch_bot:
                 self.twitch_bot = get_reference("TwitchBot")
             game_name = await self.twitch_bot.get_game(payload.from_broadcaster)
-            prompt_2 = {"role": "user", "content": f"{event["user"]} has raided with {payload.viewer_count} viewers!{f" Last seen playing {game_name}!" if game_name else ""}"}
+            viewer_count = payload.viewer_count
+            raider_name = payload.from_broadcaster.display_name
+            prompt_2 = {"role": "user", "content": f"{event["user"]} has raided with {viewer_count} viewers!{f" Last seen playing {game_name}!" if game_name else ""}"}
             full_prompt = [{"role": "system", "content": raid_prompt}, prompt_2]
             chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt, False)
             response = await chatGPT
@@ -312,7 +314,7 @@ class AssistantManager():
                 "audio": output,
                 "audio_meta": audio_meta,
                 "from_user": event["user"],
-                "event_type": f"Raid with {payload.viewer_count} viewers from {payload.from_broadcaster.display_name}"
+                "event_type": f"Raid with {viewer_count} viewers from {raider_name}"
             }
             self.event_manager.add_event(queued_event)
             return
