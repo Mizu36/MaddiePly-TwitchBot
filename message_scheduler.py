@@ -7,6 +7,7 @@ class MessageScheduler():
         self.tasks = []
         self.shared_chat = False
         self.twitch_bot = get_reference("TwitchBot")
+        self.shared_chat_enabled = False
         debug_print("MessageScheduler", "Message scheduler initialized.")
         
     async def start_scheduled_messages(self):
@@ -46,7 +47,7 @@ class MessageScheduler():
         debug_print("MessageScheduler", f"Scheduled message task started for id {task_id}: '{message}' every {minutes} minutes after {messages} messages.")
         while True:
             if self.shared_chat:
-                if not await get_setting("Shared Chat Scheduled Messages Enabled", default=False):
+                if not self.shared_chat_enabled:
                     debug_print("MessageScheduler", "Shared chat is active. Pausing scheduled message task.")
                     await asyncio.sleep(60)
                     continue  # Check every minute if shared chat is still active
