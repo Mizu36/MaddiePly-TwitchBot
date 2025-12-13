@@ -4420,6 +4420,9 @@ class DBEditor(tk.Tk):
         normalized = str(value).strip().lower() if value is not None else ""
         should_enable = normalized in ("1", "true", "t", "yes", "y", "on")
 
+        if key.startswith("Shared Chat"):
+            self._refresh_shared_chat_settings_async()
+
         if key == "Chat Response Enabled":
             try:
                 start_timer_manager_in_background()
@@ -4536,6 +4539,23 @@ class DBEditor(tk.Tk):
             return
         # No additional side effects registered for other keys.
         return
+
+    def _refresh_shared_chat_settings_async(self) -> None:
+        """Notify the CommandHandler that shared chat settings changed."""
+        try:
+            handler = get_reference("CommandHandler")
+        except Exception:
+            handler = None
+        if handler is None:
+            debug_print("GUI", "CommandHandler unavailable; cannot refresh shared chat settings.")
+            return
+        try:
+            coro = handler.set_shared_chat_settings()
+        except Exception as exc:
+            debug_print("GUI", f"Failed to prepare shared chat settings update: {exc}")
+            return
+        if not self._schedule_async_task(coro, "SharedChatSettings"):
+            debug_print("GUI", "Unable to schedule shared chat settings update; bot loop not ready.")
 
     def _get_openai_model_choices(self) -> list[str]:
         """Return cached OpenAI model ids, fetching from GPTManager if needed."""
