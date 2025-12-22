@@ -1,4 +1,4 @@
-from db import DATABASE, get_setting, get_prompt, get_hotkey, get_specific_user_data, increment_user_stat, user_exists, set_user_data
+from db import DATABASE, get_setting, get_prompt, get_hotkey
 from audio_player import AudioManager
 from message_scheduler import MessageScheduler
 from tts import ElevenLabsManager, SpeechToTextManager
@@ -23,6 +23,7 @@ class AssistantManager():
         self.elevenlabs: ElevenLabsManager = elevenlabs_manager
         self.azure: SpeechToTextManager = azure_manager
         self.event_manager: EventManager = event_manager
+        self.online_database = get_reference("OnlineDatabase")
         self.twitch_bot = get_reference("TwitchBot")
         self.handler = get_reference("CommandHandler")
         self._ensure_models_loaded()
@@ -34,7 +35,7 @@ class AssistantManager():
             try:
                 await self.chatGPT.set_models()
             except Exception as exc:
-                debug_print("Assistant", f"Failed to set OpenAI models: {exc}")
+                print(f"Failed to set OpenAI models: {exc}")
 
         try:
             loop = asyncio.get_running_loop()
@@ -71,33 +72,27 @@ class AssistantManager():
             except Exception as e:
                 print(f"[ERROR]Error during speech-to-text: {e}")
                 dictated_context = None
-        if not gpt_manager.twitch_chat_history:
-            prompt_text = await get_prompt("Message Response Prompt", False)
-            gpt_manager.twitch_chat_history = [{"role": "system", "content": prompt_text}]
         if await get_setting("Include Screenshot Context", False):
             if isinstance(screenshot_result, asyncio.Task): #Waits for screenshot task to finish if it hasn't already
                 screenshot_result = await screenshot_result
-        current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         if not self.twitch_bot:
             self.twitch_bot = get_reference("TwitchBot")
         game = await self.twitch_bot.get_current_game()
         speech_part = f"ModdiPly's last ten seconds of speech: {dictated_context}. " if dictated_context else ""
         screenshot_part = f"Description of whats currently on stream (single-frame): {screenshot_result}" if screenshot_result else ""
-        prompt = (
-            f"Date/Time: {current_time_str}\nTwitch Chat Messages: {messages_str}\n"
-            f"Twitch Stream Context: The game currently being played is {game}. {speech_part}{screenshot_part}. "
-            "You may choose to use these details to help mold a realistic twitch chatter response. "
-            "Do not use all the elements, pick one or two to help you respond in a more human-like way. "
-            "If the twitch messages are chosen, either continue the converation, or respond directly to a single chatter."
-        )
-        chatGPT = asyncio.to_thread(gpt_manager.chat_with_history, prompt, conversational = True, twitch_chat = True)
+        prompt = {"role": "user", "content": f"Twitch Chat Messages:\n{messages_str}\n\nTwitch Stream Context: The game currently being played is {game}.\n{speech_part}\n{screenshot_part}."}
+        response_prompt = await get_prompt("Message Response Prompt")
+        prompts = [{"role": "system", "content": response_prompt}, prompt]
+        chatGPT = asyncio.to_thread(gpt_manager.chat, prompts, use_twitch_emotes=True)
         response = await chatGPT
         await self.twitch_bot.send_chat(response)
 
     async def general_response(self, prompt: str) -> str:
         """Generates a general response from chatgpt based on a prompt"""
         debug_print("Assistant", f"Generating general response with prompt: {prompt}")
-        chatGPT = asyncio.to_thread(gpt_manager.chat_with_history, prompt, conversational = False, twitch_chat = False)
+        welcome_prompt = {"role": "user", "content": await get_prompt("Welcome First Chatter")}
+        prompts = [welcome_prompt, {"role": "user", "content": prompt}]
+        chatGPT = asyncio.to_thread(gpt_manager.chat, prompts, use_twitch_emotes=True)
         response = await chatGPT
         return response
     
@@ -112,10 +107,10 @@ class AssistantManager():
             self.event_manager.resume()
             return
         debug_print("Assistant", f"You said: {mic_result}")
-        if not gpt_manager.chat_history:
-            prompt_text = await get_prompt("Respond to Streamer", False)
-            gpt_manager.chat_history = [{"role": "system", "content": prompt_text}]
-        chatGPT = asyncio.to_thread(gpt_manager.chat_with_history, mic_result, conversational = False, twitch_chat = False)
+        prompt_text = await get_prompt("Respond to Streamer", False)
+        prompt = {"role": "system", "content": prompt_text}
+        prompts = [prompt, {"role": "user", "content": "ModdiPly: " + mic_result}]
+        chatGPT = asyncio.to_thread(gpt_manager.chat, prompts)
         response = await chatGPT
         output = await self.tts(response)
         await self.assistant_responds(output)
@@ -148,16 +143,17 @@ class AssistantManager():
                         # Skip malformed entries
                         continue
             except Exception as e:
-                debug_print("Assistant", f"Error iterating message history: {e}")
+                print(f"Error iterating message history: {e}")
         else:
             debug_print("Assistant", "Twitch bot message history is empty or unavailable.")
-        summary_prompt = await get_prompt("Summarize Chat", False)
+        summary_prompt = await get_prompt("Summarize Chat")
         if recent_messages == []:
             recent_messages_str = "No recent messages in the last 5 minutes."
         else:
             recent_messages_str = "\n".join([f"{msg['user']}: {msg['message']}" for msg in recent_messages])
-        gpt_manager.chat_history.append({"role": "system", "content": summary_prompt})
-        chatGPT = asyncio.to_thread(gpt_manager.chat_with_history, prompt = recent_messages_str, conversational = False, twitch_chat = False)
+        summary_prompt = {"role": "system", "content": summary_prompt}
+        prompts = [summary_prompt, {"role": "user", "content": "Recent Messages:\n" + recent_messages_str}]
+        chatGPT = asyncio.to_thread(gpt_manager.chat, prompts)
         response = await chatGPT
         debug_print("Assistant",f"Chat Summary: {response}")
         output = await self.tts(response)
@@ -175,10 +171,12 @@ class AssistantManager():
             user_name = payload.user.display_name
             tier = payload.tier
             cumulative = payload.cumulative_months
-            if not await user_exists(user_id):
-                date = event.timestamp.date().strftime("%Y-%m-%d")
-                await set_user_data(user_id=user_id, username=payload.user.name, display_name=user_name, date_added=date, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0)
-            await increment_user_stat(user_id=user_id, stat="subscriptions", amount=cumulative, override=True)
+            if not self.online_database:
+                self.online_database = get_reference("OnlineDatabase")
+            if not await self.online_database.user_exists(twitch_user_id=user_id):
+                data = {"twitch_username": payload.user.name, "twitch_display_name": user_name, "active_gacha_set": "humble beginnings"}
+                await self.online_database.create_user(user_id, data)
+            await self.online_database.create_user(user_id, {"months_subscribed": cumulative})
             text = payload.text
             streak = payload.streak_months
             if tier == "1000":
@@ -215,7 +213,7 @@ class AssistantManager():
                     prompt_2 = {"role": "system", "content": f"{user_name} resubscribed for {cumulative} months! Tier {tier}!"}
 
             full_prompt = [resub, prompt_2]
-            chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt, False)
+            chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt)
 
             response = await chatGPT
             if text:
@@ -241,10 +239,12 @@ class AssistantManager():
                 return
             payload = event["event"]
             user_id = payload.user.id
-            if not await user_exists(user_id):
-                date = payload.timestamp.date().strftime("%Y-%m-%d")
-                await set_user_data(user_id=user_id, username=payload.user.name, display_name=event["user"], date_added=date, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0)
-            await increment_user_stat(user_id=user_id, stat="subscriptions", amount=1)
+            if not self.online_database:
+                self.online_database = get_reference("OnlineDatabase")
+            if not await self.online_database.user_exists(twitch_user_id=user_id):
+                data = {"twitch_username": payload.user.name, "twitch_display_name": payload.user.display_name, "active_gacha_set": "humble beginnings"}
+                await self.online_database.create_user(user_id, data)
+            await self.online_database.increment_column(table="users", column_filter="twitch_id", value=user_id, column_to_increment="months_subscribed", increment_by=1)
             #Currently unused, but can be implemented later
             return
         elif event["type"] == "gift":
@@ -252,10 +252,12 @@ class AssistantManager():
             total = payload.total
             cumulative = payload.cumulative_total
             user_id = payload.user.id
-            if not await user_exists(user_id):
-                date = payload.timestamp.date().strftime("%Y-%m-%d")
-                await set_user_data(user_id=user_id, username=payload.user.name, display_name=event["user"], date_added=date, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0)
-            await increment_user_stat(user_id=user_id, stat="gifts", amount=cumulative, override=True)
+            if not self.online_database:
+                self.online_database = get_reference("OnlineDatabase")
+            if not await self.online_database.user_exists(twitch_user_id=user_id):
+                data = {"twitch_username": payload.user.name, "twitch_display_name": payload.user.display_name, "active_gacha_set": "humble beginnings"}
+                await self.online_database.create_user(user_id, data)
+            await self.online_database.create_user(user_id, {"subs_gifted": cumulative})
             while len(self.recent_gifted_subscriptions) < total:
                 await asyncio.sleep(1)
             recipients = self.recent_gifted_subscriptions[-total:]
@@ -280,7 +282,7 @@ class AssistantManager():
 
             gifted_prompt = await get_prompt("Gifted Sub")
             full_prompt = [{"role": "system", "content": gifted_prompt}, prompt_2]
-            chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt, False)
+            chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt)
             response = await chatGPT
             output = await self.tts(response)
             audio_meta = await self._build_audio_metadata(output)
@@ -304,7 +306,7 @@ class AssistantManager():
             raider_name = payload.from_broadcaster.display_name
             prompt_2 = {"role": "user", "content": f"{event["user"]} has raided with {viewer_count} viewers!{f" Last seen playing {game_name}!" if game_name else ""}"}
             full_prompt = [{"role": "system", "content": raid_prompt}, prompt_2]
-            chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt, False)
+            chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt)
             response = await chatGPT
             output = await self.tts(response)
             audio_meta = await self._build_audio_metadata(output)
@@ -323,10 +325,12 @@ class AssistantManager():
             payload = event["event"]
             bits = payload.bits
             user_id = payload.user.id
-            if not await user_exists(user_id):
-                date = payload.timestamp.date().strftime("%Y-%m-%d")
-                await set_user_data(user_id=user_id, username=payload.user.name, display_name=event["user"], date_added=date, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0)
-            user_data = await get_specific_user_data(user_id=user_id, field="bits_donated")
+            if not self.online_database:
+                self.online_database = get_reference("OnlineDatabase")
+            if not await self.online_database.user_exists(twitch_user_id=user_id):
+                data = {"twitch_username": payload.user.name, "twitch_display_name": event["user"], "active_gacha_set": "humble beginnings"}
+                await self.online_database.create_user(user_id, data)
+            user_data = await self.online_database.get_specific_user_data(twitch_user_id=user_id, field="bits_donated")
             override = False
             if user_data in [0, None]:
                 if not self.twitch_bot:
@@ -335,7 +339,10 @@ class AssistantManager():
                 if temp_bits and temp_bits > 0 and temp_bits > bits:
                     bits = temp_bits
                     override = True
-            await increment_user_stat(user_id=user_id, stat="bits", amount=bits, override=override)
+            if override:
+                await self.online_database.create_user(user_id, {"bits_donated": bits})
+            else:
+                await self.online_database.increment_column(table="users", column_filter="twitch_id", value=user_id, column_to_increment="bits_donated", increment_by=bits)
             if bits < threshold:
                 return
             if payload.message:
@@ -344,7 +351,7 @@ class AssistantManager():
                 cheer_prompt = await get_prompt("Bit Donation w/o Message")
             prompt_2 = {"role": "user", "content": f"{payload.user.display_name} has cheered {bits} bits!{f' They said: {payload.message}' if payload.message else ''}"}
             full_prompt = [{"role": "system", "content": cheer_prompt}, prompt_2]
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, full_prompt, False)
+            chatGPT = asyncio.to_thread(self.chatGPT.chat, full_prompt)
             response = await chatGPT
             output = await self.tts(response)
             audio_meta = await self._build_audio_metadata(output)
@@ -385,7 +392,7 @@ class AssistantManager():
         try:
             volumes, total_duration_ms = await self.audio_manager.process_audio(audio_path)
         except Exception as e:
-            debug_print("Assistant", f"process_audio failed during preprocessing: {e}")
+            print(f"process_audio failed during preprocessing: {e}")
         min_vol = min(volumes) if volumes else 0
         max_vol = max(volumes) if volumes else 0
         return {
@@ -427,7 +434,7 @@ class AssistantManager():
         try:
             raw_value = await get_setting(setting_key, default_volume)
         except Exception as exc:
-            debug_print("Assistant", f"Failed to fetch {setting_key}: {exc}")
+            print(f"Failed to fetch {setting_key}: {exc}")
             return default_volume
 
         try:
@@ -491,7 +498,7 @@ class AssistantManager():
                     debug_print("Assistant", "Audio processing timed out; proceeding with fallback volumes/duration")
                     volumes, total_duration_ms = audio_process.result() if audio_process and audio_process.done() else ([], 0)
                 except Exception as e:
-                    debug_print("Assistant", f"Audio processing failed: {e}")
+                    print(f"Audio processing failed: {e}")
                     volumes, total_duration_ms = [], 0
                 min_vol = min(volumes) if volumes else 0
                 max_vol = max(volumes) if volumes else 0
@@ -510,14 +517,14 @@ class AssistantManager():
             try:
                 prepared_path, delete_temp = await loop.run_in_executor(None, self.audio_manager.prepare_playback, audio_path, False)
             except Exception as e:
-                debug_print("Assistant", f"prepare_playback failed: {e}")
+                print(f"prepare_playback failed: {e}")
                 prepared_path, delete_temp = audio_path, False
 
             if warmup_task is not None:
                 try:
                     await asyncio.wait_for(warmup_task, timeout=2)
                 except Exception:
-                    debug_print("Assistant", "Audio warmup did not complete in time; continuing.")
+                    print("Audio warmup did not complete in time; continuing.")
 
             bounce_task = asyncio.create_task(
                 self.obs.bounce_while_talking(
@@ -570,7 +577,7 @@ class AssistantManager():
             cleaned_up = True
             raise
         except Exception as exc:
-            debug_print("Assistant", f"assistant_responds failed: {exc}")
+            print(f"assistant_responds failed: {exc}")
             audio_manager.stop_playback()
             if bounce_task is not None:
                 try:
@@ -641,7 +648,8 @@ class ResponseTimer():
 
     async def timer(self, length: int, messages: int) -> None:
         """Timer for when the AI should respond in chat"""
-        debug_print("ResponseTimer", f"Response timer started for length: {length} seconds or messages: {messages}.")
+        debug_print("ResponseTimer", f"Response timer started for length: {length} seconds and messages: {messages}.")
+        restart_timer = True
         try:
             await asyncio.sleep(length)
             debug_print("ResponseTimer", f"Timer has ended, now waiting for {messages} messages, currently at {self.message_count} messages.")
@@ -655,15 +663,20 @@ class ResponseTimer():
             if not self.assistant:
                 self.assistant = get_reference("AssistantManager")
             respond = asyncio.create_task(self.assistant.generate_chat_response(messages_list))
-            asyncio.create_task(self.start_timer())
             await respond
         except asyncio.CancelledError:
             print("Response timer was cancelled.")
+            restart_timer = False
+        finally:
+            self.timer_task = None
+            if restart_timer:
+                asyncio.create_task(self.start_timer())
         
     async def handle_message(self, user_name: str, text: str, time: str):
         """Adds message to list and updates the message_count."""
         debug_print("ResponseTimer", f"Handling message from {user_name}.")
-        if self.timer_task is None:
+        if not self.timer_task or self.timer_task.done():
+            debug_print("ResponseTimer", "Received message while timer is not running; ignoring chat line.")
             return
         full_message = f"{user_name}: {text} | {time}"
         self.received_messages.append(full_message)
@@ -705,6 +718,7 @@ class EventManager():
         self.assistant: AssistantManager = None
         self.twitch_bot = get_reference("TwitchBot")
         self.builder = get_reference("PointBuilder")
+        self.gacha_handler = get_reference("GachaHandler")
         self.voice_audio_dir = path_from_app_root("media", "voice_audio")
         debug_print("EventManager", "EventManager initialized.")
 
@@ -762,13 +776,17 @@ class EventManager():
             debug_print("EventManager", "Already playing an event, skipping.")
             return
         event = self.event_queue.pop(0)
-        if event and not self.currently_playing:
+        if event:
             if not self.builder:
                 self.builder = get_reference("PointBuilder")
             try:
                 self.currently_playing = True
                 if event["type"] in ["bits", "channel_points"]:
                     await self.builder.run_custom_redemption(event)
+                elif event["type"] == "gacha":
+                    if not self.gacha_handler:
+                        self.gacha_handler = get_reference("GachaHandler")
+                    await self.gacha_handler.handle_gacha_event(event)
                 else:
                     audio_payload = self._resolve_audio_payload(event)
                     if audio_payload is None:
@@ -795,6 +813,10 @@ class EventManager():
             try:
                 if self.previous_event["type"] in ["bits", "channel_points"]:
                     await self.builder.run_custom_redemption(self.previous_event)
+                elif self.previous_event["type"] == "gacha":
+                    if not self.gacha_handler:
+                        self.gacha_handler = get_reference("GachaHandler")
+                    await self.gacha_handler.handle_gacha_event(self.previous_event)
                 else:
                     audio_payload = self._resolve_audio_payload(self.previous_event)
                     if audio_payload is None:
@@ -823,6 +845,10 @@ class EventManager():
                 self.currently_playing = True
                 if event["type"] in ["bits", "channel_points"]:
                     await self.builder.run_custom_redemption(event)
+                elif event["type"] == "gacha":
+                    if not self.gacha_handler:
+                        self.gacha_handler = get_reference("GachaHandler")
+                    await self.gacha_handler.handle_gacha_event(event)
                 else:
                     audio_payload = self._resolve_audio_payload(event)
                     if audio_payload is None:
@@ -903,7 +929,7 @@ class EventManager():
                 path.unlink()
                 debug_print("EventManager", f"Deleted event audio file: {path}")
             except Exception as e:
-                debug_print("EventManager", f"Failed to delete event audio file {path}: {e}")
+                print(f"Failed to delete event audio file {path}: {e}")
     
     def add_event(self, event: dict) -> None:
         """Adds an event to the queue."""
@@ -959,9 +985,7 @@ class EventManager():
 async def setup_gpt_manager():
     """Sets up the GPT manager by loading settings from the database."""
     debug_print("AILogic", "Setting up GPT manager with personality prompt.")
-    personality_prompt = await get_prompt("Personality Prompt")
-    twitch_emotes = await get_prompt("Twitch Emotes")
-    gpt_manager.add_personality_to_history(personality_prompt, twitch_emotes)
+    await gpt_manager.prepare_history()
 
 
 scheduler = MessageScheduler()

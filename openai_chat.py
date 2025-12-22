@@ -3,9 +3,11 @@ from openai import OpenAI
 import tiktoken
 import base64
 import mimetypes
+import asyncio
+import threading
 from dotenv import load_dotenv
 from tools import debug_print
-from db import get_setting
+from db import get_prompt, get_setting
 
 load_dotenv()
 API_KEY = os.getenv("OPENAI_API_KEY")
@@ -32,7 +34,7 @@ def num_of_tokens(messages, model: str = "gpt-4o"):
             try:
                 return factory()
             except Exception as exc:
-                debug_print("OpenAIManager", f"Token encoding attempt failed: {exc}")
+                print("OpenAIManager", f"Token encoding attempt failed: {exc}")
 
         class _ApproxEncoding:
             def encode(self, text):
@@ -73,8 +75,7 @@ def num_of_tokens(messages, model: str = "gpt-4o"):
 class OpenAiManager:
     
     def __init__(self):
-        self.chat_history = [] # Stores the entire conversation
-        self.twitch_chat_history = [] # Stores the conversation history for Twitch chat
+        self.prompts = []
         self.default_model = None
         self.fine_tune_model = None
         self.bot_detector_model = None
@@ -83,6 +84,9 @@ class OpenAiManager:
         except TypeError:
             exit("[ERROR]Ooops! You forgot to set OPENAI_API_KEY in your environment!")
         debug_print("OpenAIManager", "OpenAI Manager initialized.")
+        self.memory_summarization_prompt = {"role": "system", "content": "TASK: Summarize recent interactions into long-term memory for MaddiePly.\n\nYou are NOT responding to chat.\nYou are converting raw conversation and events into structured memory.\n\nIMPORTANT CONSTRAINTS:\n- Do NOT write dialogue.\n- Do NOT include quotes.\n- Do NOT roleplay or add personality flair.\n- Do NOT invent facts.\n- Do NOT include formatting rules or instructions.\n- Write in neutral, factual language only.\n\nMEMORY MUST:\n- Contain only information useful for future interactions.\n- Preserve continuity of relationships, running jokes, and ongoing themes.\n- Exclude one-off chatter unless it became a repeated topic.\n\nCategorize information under the following sections ONLY if applicable:\n\nLORE:\n- Persistent facts about ModdCorp, MaddiePly, or internal canon established during interactions.\n\nRELATIONSHIPS:\n- Notable changes or patterns in how MaddiePly interacts with ModdiPly or chat.\n- Recurring viewers, roles, or reputations if relevant.\n\nUSER PREFERENCES:\n- Style, tone, or behavior the audience responds well or poorly to.\n- Repeated requests or corrections from ModdiPly.\nRUNNING JOKES & THEMES:\n- Repeated gags, policies, fictional projects, or terminology that reoccur.\n\nOPEN THREADS:\n- Unresolved topics, promises, or ongoing arcs likely to continue.\n\nAVOID STORING:\n- Exact wording of messages.\n- Temporary emotions.\n- Redundant restatements of personality.\n- Output formatting constraints.\n\nIf no meaningful long-term memory was created, respond with:\nNO UPDATE "}
+        self.working_memory = ""
+        self.twitch_emotes_prompt = None
 
     async def set_models(self):
         """Sets the OpenAI model to use for chat."""
@@ -91,104 +95,85 @@ class OpenAiManager:
         self.fine_tune_model = await get_setting("Fine-tune GPT Model")
         self.bot_detector_model = await get_setting("Fine-tune Bot Detection Model")
 
-    def add_personality_to_history(self, personality_prompt: str, twitch_emotes: str):
-        """Adds a system prompt to the chat history to set the bot's personality."""
-        debug_print("OpenAIManager", "Adding personality prompt to chat history.")
-        self.twitch_chat_history.append({"role": "system", "content": personality_prompt})
-        self.twitch_chat_history.append({"role": "system", "content": twitch_emotes})
-        self.chat_history.append({"role": "system", "content": personality_prompt})
+    async def prepare_history(self):
+        """Prepares all chat histories with system prompts."""
+        self.personality_prompt = await get_prompt("Personality Prompt")
+        self.global_output_rules = await get_prompt("Global Output Rules")
+        self.prompts = [{"role": "system", "content": self.personality_prompt}, {"role": "system", "content": self.global_output_rules}]
+        self.twitch_emotes_prompt = {"role": "system", "content": await get_prompt("Twitch Emotes")}
 
-    # Asks a question with no chat history
-    def chat(self, messages, conversational: bool) -> str:
-        debug_print("OpenAIManager", f"Asking chat question without history, conversational={conversational}.")
-        if not messages or not isinstance(messages, list):
+    def summarize_memory(self, recent_interaction: str) -> None:
+        debug_print("OpenAIManager", "Summarizing recent interactions into long-term memory.")
+        prompt = {"role": "system", "content": f"CURRENT MEMORY:\n{self.working_memory if self.working_memory else 'NONE'}\n\nRECENT EVENTS (RAW):\n{recent_interaction}"}
+        messages = [{"role": "system", "content": self.personality_prompt}, self.memory_summarization_prompt, prompt]
+        try:
+            completion = self.client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=messages
+                            )
+            openai_answer = completion.choices[0].message.content
+            if openai_answer.strip() != "NO UPDATE":
+                self.working_memory = openai_answer
+        except Exception as e:
+            print(f"[ERROR]Failed to get response from OpenAI for memory summarization: {e}")
+            return
+
+    def chat(self, prompts: list[dict], conversational: bool = False, use_twitch_emotes: bool = False) -> str:
+        """Asks a question to OpenAI's chat model after passing a system prompt and user prompt. Only two prompts should be passed in the list.
+        If conversational is True, uses the fine-tuned model for more conversational responses."""
+        debug_print("OpenAIManager", f"Asking chat question, conversational={conversational}.")
+        if not prompts or not isinstance(prompts, list):
             print("[ERROR]Didn't receive input!")
             return
-
-        # Check that the prompt is under the token context limit
-        if num_of_tokens(messages) > 4000:
-            print("[WARNING]The length of this chat question is too large for the GPT model")
-            return
-
-        debug_print("OpenAIManager", "Asking ChatGPT a question...")
-
-
-
+        
+        working_memory_prompt = {"role": "system", "content": f"MEMORY (REFERENCE ONLY):\n{self.working_memory if self.working_memory else 'NONE'}"}
+        prompts.insert(1, working_memory_prompt)
+        messages = self.prompts + prompts
+        if use_twitch_emotes:
+            messages.insert(2, self.twitch_emotes_prompt)
+        model = None
+        if conversational:
+            model = self.fine_tune_model if self.fine_tune_model else self.default_model
+            if not model:
+                model = "gpt-4o"
+        else:
+            model = self.default_model if self.default_model else "gpt-4o"
+        #debug_print("OpenAIManager", f"{messages}")
+        print("Asking ChatGPT a question...")
         # Process the answer
         try:
             completion = self.client.chat.completions.create(
-                            model=self.fine_tune_model if conversational else self.default_model,
+                            model=model,
                             messages=messages
                             )
         except Exception:
             try:
                 completion = self.client.chat.completions.create(
-                    model=self.default_model if self.default_model else "gpt-4o",
+                    model="gpt-4o",
                     messages=messages
                     )
             except Exception as e:
                 print(f"[ERROR]Failed to get response from OpenAI: {e}")
                 return
         openai_answer = completion.choices[0].message.content
+        deformatted_answer = openai_answer.lower().replace('—', ' ').strip()
+        user_input_prompt = prompts[-1]["content"]
+        recent_interaction = f"{user_input_prompt}\nMaddiePly's Response: {openai_answer}"
+        self._schedule_memory_summary(recent_interaction)
         debug_print("OpenAIManager", f"{openai_answer}")
-        return openai_answer
-    
+        return deformatted_answer
 
-    # Asks a question that includes the full conversation history
-    def chat_with_history(self, prompt="", conversational: bool = False, twitch_chat: bool = False) -> str:
-        debug_print("OpenAIManager", f"Asking chat question with history, conversational={conversational}, twitch_chat={twitch_chat}.")
-        if not prompt:
-            print("[ERROR]Didn't receive input!")
-            return
-        
-        # Add our prompt into the chat history
-        if twitch_chat:
-            self.twitch_chat_history.append({"role": "user", "content": prompt})
-        else:
-            self.chat_history.append({"role": "user", "content": prompt})
-
-        # Check total token limit. Remove old messages as needed
-        debug_print("OpenAIManager", f"Chat History has a current token length of {num_of_tokens(self.chat_history)}")
-        if not twitch_chat:
-            while num_of_tokens(self.chat_history) > 2000:
-                self.chat_history.pop(1) # We skip the 1st message since it's the system message
-                debug_print("OpenAIManager", f"Popped a message! New token length is: {num_of_tokens(self.chat_history)}")
-        else:
-            while num_of_tokens(self.twitch_chat_history) > 4000:
-                self.twitch_chat_history.pop(1)
-
-        debug_print("OpenAIManager", "Asking ChatGPT a question...")
-
-        # Use the correct chat history
-        if twitch_chat:
-            messages = self.twitch_chat_history
-        else:
-            messages = self.chat_history
-        # Add this answer to our chat history
+    def _schedule_memory_summary(self, recent_interaction: str) -> None:
         try:
-            completion = self.client.chat.completions.create(
-                            model=self.fine_tune_model if conversational else self.default_model,
-                            messages=messages
-                            )
-        except Exception:
-            try:
-                completion = self.client.chat.completions.create(
-                    model=self.default_model if self.default_model else "gpt-4o",
-                    messages=messages
-                    )
-            except Exception as e:
-                print(f"[ERROR]Failed to get response from OpenAI: {e}")
-                return
-        
-        if twitch_chat:
-            self.twitch_chat_history.append({"role": completion.choices[0].message.role, "content": completion.choices[0].message.content})
-        else:
-            self.chat_history.append({"role": completion.choices[0].message.role, "content": completion.choices[0].message.content})
-
-        # Process the answer
-        openai_answer = completion.choices[0].message.content
-        debug_print("OpenAIManager", f"{openai_answer}")
-        return openai_answer
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            threading.Thread(
+                target=self.summarize_memory,
+                args=(recent_interaction,),
+                daemon=True,
+            ).start()
+            return
+        loop.create_task(asyncio.to_thread(self.summarize_memory, recent_interaction))
     
     def bot_detector(self, message: str, model: str = None):
         debug_print("OpenAIManager", f"Running bot detection on message.")
@@ -199,7 +184,7 @@ class OpenAiManager:
         messages = [BOT_DETECTION_PROMPT, {"role": "user", "content": message}]
 
         completion = self.client.chat.completions.create(
-            model = "ft:gpt-4o-mini-2024-07-18:mizugaming:bot-detector:Bv9zPaZq",
+            model = model if model else "ft:gpt-4o-mini-2024-07-18:mizugaming:bot-detector:Bv9zPaZq",
             messages=messages
         )
         openai_answer = completion.choices[0].message.content
