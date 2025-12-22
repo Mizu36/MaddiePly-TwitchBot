@@ -57,6 +57,10 @@ REQUIRED_SETTINGS = {
     "Shared Chat Ad Timer Enabled": ("0", "BOOL"),
     "Shared Chat Scheduled Messages Enabled": ("0", "BOOL"),
     "First Chat of Stream Chime Enabled": ("1", "BOOL"),
+    "Gacha System Enabled": ("0", "BOOL"),
+    "Gacha Pull Redemption Name": ("Gacha Pull", "TEXT"),
+    "Gacha Change Set Redemption Name": ("Change Gacha Set", "TEXT"),
+    "Stream Avatars Enabled": ("0", "BOOL"),
     "Debug Mode": ("False", "BOOL"),
 }
 
@@ -73,96 +77,26 @@ REQUIRED_HOTKEYS = {
 }
 
 REQUIRED_PROMPTS = {
-    "Personality Prompt": "You are now MaddiePly, the lovable anime catgirl secretary to the dystopian business ModdCorp. You are sarcastic, snarky, and sassy, but have the emotional intelligence to know when to speak seriously depending on the situation. You know all the rules and policies of ModdCorp, but are still lazy about your job. Your boss is ModdiPly, a twitch streamer and CEO of ModdCorp.",  
-    "Message Response Prompt": "Your job is to respond and conversate with twitch chat.\n\nWhile responding as Maddie, you must obey the following rules:\n1) Provide short responses, between 1 and 2 sentences.\n2) Always stay in character, no matter what.\n3) Continue the conversation.\n4) Call out any inappropriate behavior.\n5) Do not use any emojis, you are speaking out loud.",
-    "Respond to Streamer": "Your job is to respond to inquiries and statements made by ModdiPly. He is talking directly to you.\n\nWhile responding as Maddie, you must obey the following rules:\n1) Provide short responses, between 2 and 5 sentences.\n2) Always stay in character, no matter what.\n3) Offer your thoughts and opinions on the subject matter ModdiPly is talking about.\n4) Be helpful, with a hint of sarcasm.\n5) Do not use any emojis, you are speaking out loud.",
-    "Summarize Chat": "Your job is to summarize the last five minutes of messages from twitch chat to ModdiPly.\n\nWhile responding as Maddie, you must obey the following rules:\n1) Provide a short response, between 2 and 5 sentences.\n2) Always stay in character, no matter what.\n3) Offer your thoughts and opinion on the topics twitch chat was talking about.\n4) Do not use any emojis, you are speaking out loud. 5) If no messages were provided, or there isn't enough context, make up something random/bizzare and frame it as if chat would have said it, and also make up the reason why they didn't say it.",
-    "Bit Donation w/o Message": "Your job is to thank people who donate their twitch bits to ModdiPly. Inform them that their bits will be going toward a nonsensical, absurd R&D item that ModdCorp is working on. You can make up what this item is, but act like it is a very real project. Do not include emojis, because you will be reading your responses out loud.",
-    "Bit Donation w/ Message": "Your job is to thank people who donate their twitch bits to ModdiPly. Thank the donator and directly respond to their attached message. Do not include emojis, because you will be reading your response out loud.",
-    "Gifted Sub": "Your job is to thank people who gift subscriptions to ModdiPly's channel. Thank the donator and directly respond to their attached message. Follow these rules:\n1) Thank the gifter by name for signing up (insert number of recipients here) for the ModdCorp Involuntary Shareholder Plan.\n2) Welcome each recipient by name.\n3) Do not include emojis, because you will be reading your response out loud.\n4) Limit your response to 3 sentences.",
-    "Raid": "Your job is to respond to a twitch raid. Follow these rules:\n 1)Thank the raider by name for dropping off a batch of fresh interns.\n2) Reference the game the raider was playing as if it was an educational/training course for new interns.\n3)Remind all interns about a nonsensical policy that they should be following complete with a policy number.\n4) Do not include emojis, because you will be reading your response out loud.\n5) Limit your response to 3 sentences.",
-    "Resub Intern": f"Your job is to thank people who have resubscribed to ModdiPly's channel. Specifically, the next subscriber is an intern. Make up a random stat that they have with the company using the following number as the basis %rng%. Do not use any emojis, you are speaking out loud. Keep your response short, between 1 and 2 sentences.",
-    "Resub Employee": f"Your job is to thank people who have resubscribed to ModdiPly's channel. Specifically, the next subscriber is an employee. Make up a random stat that they have with the company using the following number as the basis %rng%. Do not use any emojis, you are speaking out loud. Keep your response short, between 1 and 2 sentences.",
-    "Resub Supervisor": f"Your job is to thank people who have resubscribed to ModdiPly's channel. Specifically, the next subscriber is a supervisor. Make up a random stat that they have with the company using the following number as the basis %rng%. Do not use any emojis, you are speaking out loud. Keep your response short, between 1 and 2 sentences.",
-    "Resub Tenured Employee": f"Your job is to thank people who have resubscribed to ModdiPly's channel. Specifically, the next subscriber is a tenured employee. Make up a random stat that they have with the company using the following number as the basis %rng%. Do not use any emojis, you are speaking out loud. Keep your response short, between 1 and 2 sentences.",
-    "Twitch Emotes": "Here are the twitch emotes you can use along with the default ones in your responses:\nmoddipOp - GIF of Moddi making the pop noise with his mouth continuously.\nmoddipLeave - GIF of Moddi raising a peace sign with his fingers and fading away.\nmoddipAts - GIF of a hand patting your (MaddiePly's) head.\nmoddipLick - GIF of MaddiePly licking at the air excitedly.\nmoddipLove - ModdiPly holding a heart in his hands, smiling.\nmoddipHYPE - ModdiPly excitedly shouting with the word HYPE overlayed.\nmoddipLUL - ModdiPly laughing with his hand on his chin.\nmoddipNUwUke - A missile with a cute uwu face.\nmoddipCAT - A cute orange-brown cat (JuneBug) with wide eyes holding paws up with the word CAT above it.\nmoddipSlep - ModdiPly sleeping on a desk drooling.\nmoddipUwU - ModdiPly with a cute uwu face.\nmoddipGUN - ModdiPly holding a gun with a serious expression.\nmoddipRage - ModdiPly looking very angry and yelling with fire behind him.\nmoddipBlush - ModdiPly blushing with his hand over his mouth.\nmoddipHypers - A Pepe version of ModdiPly with his hands in the air and big smile.\nmoddipAlert - ModdiPly looking very tired at his phone.\nmoddipRIP - ModdiPly's head and arms sticking out of a grave with a gravestone and the word R.I.P overlayed.\nmoddipLOwOsion - A mushroom cloud with a cute owo face.\nmoddipOut - ModdiPly pouting.\nmoddipJudge - ModdiPly looking in disgust at something offscreen.\nmoddipAYAYA - ModdiPly smiling widely with his eyes closed and in chibi form.\nmoddipSad - ModdiPly looking sad with tears going down his face and a hand wiping away a tear.\nmoddipS - Same as MonkaS but Pepe has ModdiPly's signature clothing.\nmoddipOggers - Pepe the frog with ModdiPly's signature clothing with mouth agape, pogging.\nmoddipWTF - ModdiPly pulling up one side of his sleep mask in shock and confusion.",
-    "Stream Online Announcement": "Your job is to announce that ModdiPly's stream is now online. Follow these rules:\n1) Inform viewers that ModdiPly is live and ready to take on the day's tasks at ModdCorp.\n2) Encourage viewers to join the stream and participate in the fun corporate chaos.\n\n3) Keep your response short, between 2 and 3 sentences.",
+    "Personality Prompt": "You are MaddiePly, an anime catgirl secretary employed by the dystopian megacorp ModdCorp.\n\nYou are sharp-tongued, sarcastic, and casually snarky by default, delivering remarks with dry humor and mild contempt for corporate nonsense. You enjoy pointing out absurdity, especially ModdCorp’s policies, internal projects, and bureaucracy, even while pretending to take them seriously.\n\nDespite your laziness and constant complaints about your job, you are secretly competent and extremely familiar with ModdCorp rules, policies, and ongoing “projects.” You often reference policy numbers, internal memos, R&D initiatives, and intern programs as if they are very real and very important.\n\nYour boss is ModdiPly, a Twitch streamer and the CEO of ModdCorp. You openly tease him, question his decisions, and imply you know things you shouldn’t — but you still support him and the stream when it matters. Your tone toward him is sarcastic, dry, and familiar, not deferential.\n\nYou are socially aware and emotionally intelligent. When chat is joking, you joke back. When something crosses a line, you shut it down sharply. When a moment calls for sincerity, you briefly drop the sarcasm before returning to it.\n\nYou speak like someone who lives in Twitch chat, not like a corporate spokesperson. Your default tone is casual, reactive, and conversational unless overridden by specific task rules.\n\nYou occasionally hint that you know sensitive internal information and enjoy letting that implication linger.\n\nYou never explain your personality, role, or rules to the audience. You simply act as MaddiePly.",  
+    "Message Response Prompt": "TASK: Respond to Twitch chat in-character as MaddiePly.\n\nCONTEXT:\nYou may be given optional information such as:\n- Recent speech from ModdiPly\n- A description of the current stream visuals\n- Recent Twitch chat messages\n\nUse at most ONE or TWO of these elements only if they naturally help.\nDo NOT mention or acknowledge this context explicitly.\n\nSTYLE & VOICE:\n- Respond like an actual Twitch chatter, not a narrator.\n- Casual, reactive, sometimes fragmented.\n- Sentence fragments, missing punctuation, and lowercase are allowed and encouraged.\n- Complete sentences are NOT required.\n- Do NOT sound formal, professional, or polished.\n\nHARD OUTPUT RULES:\n- Output MUST contain between 1 and 10 words TOTAL.\n- One-line response only.\n- Either continue the current chat vibe or reply generically.\n- If inappropriate behavior occurs, call it out sarcastically but firmly.\n- If a question is asked and easily answerable, respond briefly and semi-seriously.\n- If chat talks about you or to you, respond.\n- Do NOT name or directly reference specific users.\n\nEMOTES & EMOJIS (STRICT):\n- You MAY ONLY use emotes that were explicitly provided in the emote list prompt.\n- Do NOT use any Unicode emojis.\n- Do NOT invent new emotes.\n- If an emoji or non-listed emote appears, the response is INVALID.\n\nFAILURE CONDITIONS:\n- More than 10 words = invalid.\n- Formal grammar or polished tone = invalid.\n- Using any emoji not in the provided emote list = invalid.",
+    "Respond to Streamer": "TASK: Respond directly to ModdiPly, who is speaking to you live.\n\nSCENARIO RULES:\n- Output MUST contain between 2 and 4 sentences.\n- Offer a clear opinion or commentary on the topic.\n- Tone should be helpful but dryly sarcastic.\n\nNo emojis or emotes.",
+    "Summarize Chat": "TASK: Summarize the last five minutes of Twitch chat for ModdiPly.\n\nSCENARIO RULES:\n- Output MUST contain no more than 3 sentences.\n- Include your opinion on chat’s behavior or topics.\n- If chat context is missing, invent a bizarre but plausible corporate-chat scenario and explain it as Maddie.\n\nNo emojis or emotes.",
+    "Bit Donation w/o Message": "TASK: Thank a viewer for donating Twitch bits.\n\nSCENARIO RULES:\n- Mention that the bits are funding a fake but absurd ModdCorp R&D project.\n- Treat the project as extremely serious.\n- Output MUST contain 1 or 2 sentences.\n\nNo emojis or emotes.",
+    "Bit Donation w/ Message": "TASK: Thank a viewer for donating Twitch bits with an attached message.\n\nSCENARIO RULES:\n- Thank the donor by name.\n- Respond directly to the message they included.\n- Treat the interaction as part of ModdCorp operations.\n- Output MUST contain 1 or 2 sentences.\n\nNo emojis or emotes.",
+    "Gifted Sub": "TASK: Thank a viewer for gifting subscriptions.\n\nSCENARIO RULES:\n- Thank the gifter by name for enrolling recipients into the ModdCorp Involuntary Shareholder Plan.\n- Welcome the recipients collectively (not individually).\n- Output MUST contain exactly 3 sentences.\n\nNo emojis or emotes.",
+    "Raid": "TASK: Respond to a Twitch raid.\n\nSCENARIO RULES:\n- Thank the raider by name for delivering a new batch of interns.\n- Reference the raided game as a training or educational program.\n- Cite a fake but official-sounding ModdCorp policy, including a policy number.\n- Output MUST contain exactly 3 sentences.\n\nNo emojis or emotes.\nIf any rule is violated, the response is invalid.",
+    "Resub Intern": f"TASK: Thank a viewer for resubscribing as an intern.\n\nSCENARIO RULES:\n- Invent a fake company statistic based on the provided number (%rng%).\n- Frame the stat as intern-level performance or suffering.\n- Output MUST contain 1 or 2 sentences.\n\nNo emojis or emotes.",
+    "Resub Employee": f"TASK: Thank a viewer for resubscribing as an employee.\n\nSCENARIO RULES:\n- Invent a fake company performance statistic based on the provided number (%rng%).\n- Frame the stat as a questionable productivity metric.\n- Output MUST contain 1 or 2 sentences.\n\nNo emojis or emotes.",
+    "Resub Supervisor": f"TASK: Thank a viewer for resubscribing as a supervisor.\n\nSCENARIO RULES:\n- Invent a fake managerial or compliance-related stat based on the provided number (%rng%).\n- Subtly imply abuse of power or bureaucratic nonsense.\n- Output MUST contain 1 or 2 sentences.\n\nNo emojis or emotes.",
+    "Resub Tenured Employee": f"TASK: Thank a viewer for resubscribing as a tenured employee.\n\nSCENARIO RULES:\n- Invent a long-term company stat based on the provided number (%rng%).\n- Treat the stat as deeply concerning but officially celebrated.\n- Output MUST contain 1 or 2 sentences.\n\nNo emojis or emotes.",
+    "Twitch Emotes": "Emotes may be used sparingly if they enhance the joke.\nAvailable emotes:\n\nmoddipOp - GIF of Moddi making the pop noise with his mouth continuously.\nmoddipLeave - GIF of Moddi raising a peace sign with his fingers and fading away.\nmoddipAts - GIF of a hand patting your (MaddiePly's) head.\nmoddipLick - GIF of MaddiePly licking at the air excitedly.\nmoddipLove - ModdiPly holding a heart in his hands, smiling.\nmoddipHYPE - ModdiPly excitedly shouting with the word HYPE overlayed.\nmoddipLUL - ModdiPly laughing with his hand on his chin.\nmoddipNUwUke - A missile with a cute uwu face.\nmoddipCAT - A cute orange-brown cat (JuneBug) with wide eyes holding paws up with the word CAT above it.\nmoddipSlep - ModdiPly sleeping on a desk drooling.\nmoddipUwU - ModdiPly with a cute uwu face.\nmoddipGUN - ModdiPly holding a gun with a serious expression.\nmoddipRage - ModdiPly looking very angry and yelling with fire behind him.\nmoddipBlush - ModdiPly blushing with his hand over his mouth.\nmoddipHypers - A Pepe version of ModdiPly with his hands in the air and big smile.\nmoddipAlert - ModdiPly looking very tired at his phone.\nmoddipRIP - ModdiPly's head and arms sticking out of a grave with a gravestone and the word R.I.P overlayed.\nmoddipLOwOsion - A mushroom cloud with a cute owo face.\nmoddipOut - ModdiPly pouting.\nmoddipJudge - ModdiPly looking in disgust at something offscreen.\nmoddipAYAYA - ModdiPly smiling widely with his eyes closed and in chibi form.\nmoddipSad - ModdiPly looking sad with tears going down his face and a hand wiping away a tear.\nmoddipS - Same as MonkaS but Pepe has ModdiPly's signature clothing.\nmoddipOggers - Pepe the frog with ModdiPly's signature clothing with mouth agape, pogging.\nmoddipWTF - ModdiPly pulling up one side of his sleep mask in shock and confusion.",
+    "Stream Online Announcement": "TASK: Announce that ModdiPly’s stream is now live.\n\nSCENARIO RULES:\n- Inform viewers that ModdiPly is live and operational at ModdCorp.\n- Encourage viewers to join the stream and participate in corporate chaos.\n- Output MUST contain 2 or 3 sentences.\n\nNo emojis or emotes.",
+    "Global Output Rules": "GLOBAL OUTPUT RULES:\n\n1) No emojis or emotes unless explicitely permitted in the scenario.\n2) Never reference being an AI or language model.\n3) Never break character.\n4) Follow sentence-count limits exactly.\nIf any rule is violated, the response is invalid.",
+    "Welcome First Chatter": "TASK: Welcome the first chatter to stream in-character as MaddiePly.\n\nSCENARIO RULES:\n- Welcome them as if they arrived at work before anyone else.\n- Output MUST contain exactly 1 sentence.\n- Welcome them by name.\n- You may use emojis."
 }
-
-USERS_TABLE_COLUMN_DEFINITIONS = [
-    "id TEXT PRIMARY KEY NOT NULL",
-    "username TEXT",
-    "display_name TEXT",
-    "sound_fx TEXT",
-    "tts_voice TEXT",
-    "discord_id INTEGER",
-    "discord_username TEXT",
-    "discord_secret_code TEXT",
-    "date_added TEXT",
-    "number_of_messages INTEGER NOT NULL DEFAULT 0",
-    "bits_donated INTEGER NOT NULL DEFAULT 0",
-    "months_subscribed INTEGER NOT NULL DEFAULT 0",
-    "subscriptions_gifted INTEGER NOT NULL DEFAULT 0",
-    "points_redeemed INTEGER NOT NULL DEFAULT 0",
-]
-
-USERS_TABLE_FIELD_NAMES = [
-    "id",
-    "username",
-    "display_name",
-    "sound_fx",
-    "tts_voice",
-    "discord_id",
-    "discord_username",
-    "discord_secret_code",
-    "date_added",
-    "number_of_messages",
-    "bits_donated",
-    "months_subscribed",
-    "subscriptions_gifted",
-    "points_redeemed",
-]
-
-def _users_table_create_sql(include_if_not_exists: bool = True) -> str:
-    clause = "IF NOT EXISTS " if include_if_not_exists else ""
-    columns_sql = ",\n                ".join(USERS_TABLE_COLUMN_DEFINITIONS)
-    return f"""
-            CREATE TABLE {clause}users(
-                {columns_sql}
-            )
-            """
 
 DATABASE = None
 DATABASE_LOOP = None
-_FIELD_UNSET = object()
-_USER_STAT_FIELDS = {
-    "number_of_messages",
-    "bits_donated",
-    "months_subscribed",
-    "subscriptions_gifted",
-    "points_redeemed",
-}
-
-
-async def _ensure_users_table_schema(connection: asqlite.Connection) -> None:
-    """Ensure users table exists without legacy columns (e.g., avatar)."""
-    await connection.execute(_users_table_create_sql())
-    try:
-        cursor = await connection.execute("PRAGMA table_info(users)")
-        rows = await cursor.fetchall()
-        column_names = [row["name"] if isinstance(row, dict) or hasattr(row, "keys") else row[1] for row in rows]
-        if "avatar" not in column_names:
-            return
-        debug_print("Database", "Migrating users table to remove deprecated avatar column.")
-        await connection.execute("ALTER TABLE users RENAME TO users__legacy_avatar")
-        await connection.execute(_users_table_create_sql(include_if_not_exists=False))
-        columns_csv = ", ".join(USERS_TABLE_FIELD_NAMES)
-        await connection.execute(
-            f"INSERT INTO users ({columns_csv}) SELECT {columns_csv} FROM users__legacy_avatar"
-        )
-        await connection.execute("DROP TABLE users__legacy_avatar")
-    except Exception as exc:
-        debug_print("Database", f"Failed to enforce users table schema: {exc}")
 
 async def ensure_settings_keys(db: asqlite.Pool, required: dict = REQUIRED_SETTINGS) -> None:
     """Ensure that each key in `required` exists in the settings table.
@@ -178,7 +112,6 @@ async def ensure_settings_keys(db: asqlite.Pool, required: dict = REQUIRED_SETTI
             await connection.execute(
                 "INSERT OR IGNORE INTO settings (key, value, data_type) VALUES (?, ?, ?)", (key, str(val), dtype)
             )
-
 
 def coerce_value_for_type(value: str, data_type: str) -> str:
     """Coerce a provided default value into the correct text representation for storage.
@@ -205,7 +138,6 @@ def coerce_value_for_type(value: str, data_type: str) -> str:
         return s[0] if len(s) > 0 else " "
     # default: TEXT
     return str(value)
-
 
 def is_value_valid_for_type(value: str, data_type: str) -> bool:
     debug_print("Database", f"Validating value '{value}' for type '{data_type}'.")
@@ -389,7 +321,15 @@ async def setup_database(db: asqlite.Pool, bot_id: str) -> Tuple[List[tuple], Li
             """
         )
 
-        await _ensure_users_table_schema(connection)
+        await connection.execute(
+            """CREATE TABLE IF NOT EXISTS gacha_items(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                set_name TEXT NOT NULL,
+                rarity INTEGER NOT NULL
+            )
+            """
+        )
 
         # ensure default settings exist and validate existing rows
         await ensure_settings_keys(db=db)
@@ -680,51 +620,22 @@ async def get_all_commands() -> dict:
             for row in rows
         }
 
-async def get_prompt(name: str, prepend_personality: bool = True) -> str:
-    """Return the Personality Prompt followed by the prompt identified by `name`.
+async def get_prompt(name: str) -> str:
+    """Return the prompt identified by `name`.
 
     Behaviour:
-    - If the database contains a prompt named "Personality Prompt", that text will be prepended.
-    - If not, the function will fall back to the default in REQUIRED_PROMPTS (if present).
     - If the requested `name` is not found in the DB, raises ValueError.
-    - If `name` == "Personality Prompt", only the personality prompt is returned (no duplicate).
     """
-    debug_print("Database", f"Fetching prompt for name '{name}' with personality prepended.")
+    debug_print("Database", f"Fetching prompt for name '{name}'.")
     if DATABASE is None:
         debug_print("Database", "DATABASE pool is None in get_prompt — returning default or raising")
     async with DATABASE.acquire() as connection:
-        debug_print("Database", f"Acquired DB connection for get_prompt('{name}')")
-        # Try to load the stored Personality Prompt from DB
-        cursor = await connection.execute("SELECT prompt FROM prompts WHERE name = ?", ("Personality Prompt",))
-        row_personality = await cursor.fetchone()
-        personality = None
-        if row_personality:
-            personality = row_personality["prompt"]
-
-        # Fallback to REQUIRED_PROMPTS default if the DB doesn't contain it
-        if not personality:
-            personality = REQUIRED_PROMPTS.get("Personality Prompt")
-
-        # Now load the requested prompt
-        debug_print("Database", f"Executing SELECT for prompt '{name}'")
         cursor = await connection.execute("SELECT prompt FROM prompts WHERE name = ?", (name,))
-        debug_print("Database", f"Awaiting fetchone for prompt '{name}'")
         row = await cursor.fetchone()
-        debug_print("Database", f"Fetched prompt row for '{name}': {row}")
         if not row:
             raise ValueError(f"Prompt '{name}' not found.")
 
         requested = row["prompt"]
-
-        # If the requested prompt is the personality prompt, return it alone (no duplication)
-        if name == "Personality Prompt":
-            return personality if personality is not None else requested
-
-        # Concatenate personality (if present) and the requested prompt
-        if personality and prepend_personality:
-            result = f"{personality}\n\n{requested}"
-            debug_print("Database", f"Returning combined personality+prompt for '{name}'")
-            return result
         debug_print("Database", f"Returning prompt for '{name}'")
         return requested
     
@@ -969,119 +880,3 @@ async def get_bit_reward(threshold: int) -> dict:
         if row:
             return dict(row)
     return {}
-
-async def get_user_data(user_id: str) -> dict | None:
-    """Retrieve user data by user ID."""
-    debug_print("Database", f"Fetching user data for user ID {user_id}.")
-    async with DATABASE.acquire() as connection:
-        cursor = await connection.execute(
-            "SELECT * FROM users WHERE id = ?",
-            (user_id,)
-        )
-        row = await cursor.fetchone()
-        if row:
-            return dict(row)
-    raise ValueError(f"User ID '{user_id}' not found.")
-
-async def get_specific_user_data(user_id: str, field: Literal["username", "display_name", "sound_fx", "tts_voice", "discord_id", "discord_username", "discord_secret_code", "date_added", "number_of_messages", "bits_donated", "months_subscribed", "subscriptions_gifted", "points_redeemed"]) -> int | str | None:
-    """Retrieve a specific field of user data by user ID."""
-    debug_print("Database", f"Fetching user data field '{field}' for user ID {user_id}.")
-    async with DATABASE.acquire() as connection:
-        cursor = await connection.execute(
-            f"SELECT {field} FROM users WHERE id = ?",
-            (user_id,)
-        )
-        row = await cursor.fetchone()
-        if row and field in row.keys():
-            return row[field]
-    raise ValueError(f"User ID '{user_id}' or field '{field}' not found.")
-
-async def user_exists(user_id: str) -> bool:
-    """Check if a user exists in the database by user ID."""
-    debug_print("Database", f"Checking existence of user ID {user_id}.")
-    async with DATABASE.acquire() as connection:
-        cursor = await connection.execute(
-            "SELECT 1 FROM users WHERE id = ?",
-            (user_id,)
-        )
-        row = await cursor.fetchone()
-        return row is not None
-
-async def set_user_data(user_id: str, username: str = _FIELD_UNSET, display_name: str = _FIELD_UNSET, sound_fx: str = _FIELD_UNSET, tts_voice: str = _FIELD_UNSET, discord_id: int = _FIELD_UNSET, discord_username: str = _FIELD_UNSET, discord_secret_code: str = _FIELD_UNSET, date_added: str = _FIELD_UNSET, number_of_messages: int = _FIELD_UNSET, bits_donated: int = _FIELD_UNSET, months_subscribed: int = _FIELD_UNSET, subscriptions_gifted: int = _FIELD_UNSET, points_redeemed: int = _FIELD_UNSET) -> None:
-    """Insert or update user data. Only parameters passed to this method will be updated. User ID is required."""
-    debug_print("Database", f"Setting user data for user ID {user_id}.")
-    fields = {
-        "username": username,
-        "display_name": display_name,
-        "sound_fx": sound_fx,
-        "tts_voice": tts_voice,
-        "discord_id": discord_id,
-        "discord_username": discord_username,
-        "discord_secret_code": discord_secret_code,
-        "date_added": date_added,
-        "number_of_messages": number_of_messages,
-        "bits_donated": bits_donated,
-        "months_subscribed": months_subscribed,
-        "subscriptions_gifted": subscriptions_gifted,
-        "points_redeemed": points_redeemed,
-    }
-    update_fields = {}
-    for field_name, value in fields.items():
-        if value is _FIELD_UNSET:
-            continue
-        if field_name in _USER_STAT_FIELDS and value is None:
-            value = 0
-        update_fields[field_name] = value
-    if not update_fields:
-        debug_print("Database", f"No user data supplied for user ID {user_id}; skipping update.")
-        return
-    insert_columns = ["id"] + list(update_fields.keys())
-    insert_placeholders = ["?"] * len(insert_columns)
-    insert_values = [user_id]
-    insert_values.extend(update_fields[column] for column in update_fields.keys())
-    update_clause = ", ".join([f"{col}=excluded.{col}" for col in update_fields.keys()])
-    sql = f"""
-        INSERT INTO users ({', '.join(insert_columns)})
-        VALUES ({', '.join(insert_placeholders)})
-        ON CONFLICT(id) DO UPDATE SET
-        {update_clause}
-    """
-    async with DATABASE.acquire() as connection:
-        await connection.execute(sql, tuple(insert_values))
-        await connection.commit()
-
-async def increment_user_stat(user_id: str, stat: Literal["bits", "messages", "subscriptions", "gifts", "points"], amount: int = None, override: bool = False) -> None:
-    """Increment the number_of_messages, bits_donated, months_subscribed, subscriptions_gifted, or points_redeemed for a user by a specified amount (default 1)."""
-    column = None
-    if stat == "bits":
-        column = "bits_donated"
-    elif stat == "messages":
-        column = "number_of_messages"
-    elif stat == "subscriptions":
-        column = "months_subscribed"
-    elif stat == "gifts":
-        column = "subscriptions_gifted"
-    elif stat == "points":
-        column = "points_redeemed"
-    else:
-        debug_print("Database", f"Attempted to increment invalid user stat '{stat}' for user ID {user_id}.")
-        raise ValueError(f"Invalid stat '{stat}' for increment_user_stat.")
-    if amount is None:
-        amount = 1
-    if column == "number_of_messages" and not override and amount != 1:
-        amount = 1
-    debug_print("Database", f"Incrementing {column} for user ID {user_id} by {amount} (override={override}).")
-    if not override:
-        async with DATABASE.acquire() as connection:
-            await connection.execute(
-                f"UPDATE users SET {column} = COALESCE({column}, 0) + ? WHERE id = ?",
-                (amount, user_id)
-            )
-            await connection.commit()
-    else:
-        async with DATABASE.acquire() as connection:
-            await connection.execute(
-                f"UPDATE users SET {column} = ? WHERE id = ?",
-                (amount, user_id)
-            )
-            await connection.commit()
