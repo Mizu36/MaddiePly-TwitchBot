@@ -133,7 +133,6 @@ def ensure_database_initialized(bot_id: str) -> None:
         _error(f"Failed to initialize database: {exc}")
         raise
 
-
 def load_environment() -> Dict[str, str]:
     load_dotenv(dotenv_path=ENV_PATH, override=True)
     tracked = REQUIRED_ENV_KEYS + IDENTITY_KEYS + OPTIONAL_WARN_KEYS
@@ -141,7 +140,6 @@ def load_environment() -> Dict[str, str]:
     for key in tracked:
         env[key] = (os.getenv(key, "") or "").strip()
     return env
-
 
 def validate_required(env: Dict[str, str]) -> bool:
     missing = [key for key in REQUIRED_ENV_KEYS if not env.get(key)]

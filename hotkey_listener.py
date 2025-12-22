@@ -91,9 +91,9 @@ class GlobalHotkeyListener:
                 try:
                     threading.Thread(target=f, args=(action,), daemon=True).start()
                 except Exception:
-                    debug_print("HotkeyListener", f"Failed to start callback thread for {action}: {traceback.format_exc()}")
+                    print(f"Failed to start callback thread for {action}: {traceback.format_exc()}")
         except Exception:
-            debug_print("HotkeyListener", f"Error invoking callbacks for {action}: {traceback.format_exc()}")
+            print(f"Error invoking callbacks for {action}: {traceback.format_exc()}")
 
     def _register_keybind(self, action: str, keybind: str) -> None:
         if keyboard is None:
@@ -122,7 +122,7 @@ class GlobalHotkeyListener:
             self._hotkey_strings[action] = keybind
             debug_print("HotkeyListener", f"Registered hotkey for '{action}' -> '{keybind}' (id={hotkey_id})")
         except Exception:
-            debug_print("HotkeyListener", f"Failed to register hotkey for '{action}' -> '{keybind}': {traceback.format_exc()}")
+            print(f"Failed to register hotkey for '{action}' -> '{keybind}': {traceback.format_exc()}")
 
     def unregister_action(self, action: str) -> None:
         """Unregister any hotkey bound to `action` and remove it from internal map."""
@@ -139,7 +139,7 @@ class GlobalHotkeyListener:
                         # Fallback: try removing by the hotkey string if stored
                         keyboard.remove_hotkey(str(prev))
                     except Exception:
-                        debug_print("HotkeyListener", f"Failed to remove hotkey for action {action}: {traceback.format_exc()}")
+                        print(f"Failed to remove hotkey for action {action}: {traceback.format_exc()}")
             else:
                 # nothing registered for this action
                 return
@@ -150,7 +150,7 @@ class GlobalHotkeyListener:
                 pass
             debug_print("HotkeyListener", f"Unregistered hotkey for action '{action}'")
         except Exception:
-            debug_print("HotkeyListener", f"Error unregistering action '{action}': {traceback.format_exc()}")
+            print(f"Error unregistering action '{action}': {traceback.format_exc()}")
 
     def update_hotkey(self, action: str, keybind: str) -> None:
         """Update the hotkey for the given action: unregister previous, register new."""
@@ -184,7 +184,7 @@ class GlobalHotkeyListener:
                     pass
                 debug_print("HotkeyListener", f"Cleared hotkey for action '{action}' (no new keybind provided)")
         except Exception:
-            debug_print("HotkeyListener", f"Error updating hotkey for '{action}': {traceback.format_exc()}")
+            print(f"Error updating hotkey for '{action}': {traceback.format_exc()}")
 
     def load_hotkeys(self, mapping: Dict[str, str]) -> None:
         """Load a mapping of action -> keybind and (re)register them globally.
@@ -209,7 +209,7 @@ class GlobalHotkeyListener:
                     continue
                 self._register_keybind(action, keybind)
         except Exception:
-            debug_print("HotkeyListener", f"Error loading hotkeys: {traceback.format_exc()}")
+            print(f"Error loading hotkeys: {traceback.format_exc()}")
 
     def reload_from_db(self, timeout: float = 2.0) -> None:
         """Read hotkeys from the async DB and register them.
@@ -241,7 +241,7 @@ class GlobalHotkeyListener:
                 else:
                     debug_print("HotkeyListener", f"DB file not found at {db_path}; cannot load hotkeys.")
             except Exception:
-                debug_print("HotkeyListener", f"Synchronous hotkey DB read failed: {traceback.format_exc()}")
+                print(f"Synchronous hotkey DB read failed: {traceback.format_exc()}")
             return
 
         mapping = {}
@@ -252,7 +252,7 @@ class GlobalHotkeyListener:
                 mapping = fut.result(timeout)
             except Exception:
                 # Fallback: try individual gets for required keys only
-                debug_print("HotkeyListener", "Bulk fetch failed; falling back to per-key fetch.")
+                print("Bulk fetch failed; falling back to per-key fetch.")
                 futures = {}
                 for action in REQUIRED_HOTKEYS.keys():
                     fut = None
@@ -271,7 +271,7 @@ class GlobalHotkeyListener:
                     if val is not None:
                         mapping[action] = val
         except Exception:
-            debug_print("HotkeyListener", f"Failed to reload hotkeys from DB: {traceback.format_exc()}")
+            print(f"Failed to reload hotkeys from DB: {traceback.format_exc()}")
 
         # Finally, apply mapping
         if mapping:
@@ -298,7 +298,7 @@ class GlobalHotkeyListener:
                     try:
                         keyboard.remove_hotkey(str(reg))
                     except Exception:
-                        debug_print("HotkeyListener", f"Failed to remove hotkey during pause for {act}: {traceback.format_exc()}")
+                        print(f"Failed to remove hotkey during pause for {act}: {traceback.format_exc()}")
             self._registered_hotkeys.clear()
         debug_print("HotkeyListener", "Paused global hotkey listening (bindings removed temporarily).")
 
@@ -322,7 +322,7 @@ class GlobalHotkeyListener:
                 if kb and str(kb).lower() != "null":
                     self._register_keybind(act, kb)
             except Exception:
-                debug_print("HotkeyListener", f"Failed to re-register hotkey for {act} during resume: {traceback.format_exc()}")
+                print(f"Failed to re-register hotkey for {act} during resume: {traceback.format_exc()}")
         debug_print("HotkeyListener", "Resumed global hotkey listening (bindings restored).")
 
 

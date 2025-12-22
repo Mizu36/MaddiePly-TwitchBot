@@ -20,7 +20,7 @@ def open_sheet(sheet_id):
         try:
             start_google_sheets()
         except Exception as e:
-            debug_print("GoogleAPI", f"Error initializing Google Sheets client: {e}")
+            print(f"Error initializing Google Sheets client: {e}")
             raise
     sheet = GOOGLE_CLIENT.open_by_key(sheet_id).sheet1
     return sheet

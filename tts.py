@@ -115,7 +115,7 @@ class SpeechToTextManager:
         try:
             result = speech_synthesizer.speak_text_async(text).get()
         except Exception as e:
-            debug_print("AzureTTS", f"Error during speech synthesis: {e}")
+            print(f"Error during speech synthesis: {e}")
             # On exception, try a plain text fallback before giving up
             try:
                 result2 = speech_synthesizer.speak_text_async(text).get()
@@ -123,7 +123,7 @@ class SpeechToTextManager:
                     debug_print("AzureTTS", f"Fallback text synthesis succeeded and saved to {audio_path}")
                     return str(audio_path)
             except Exception as e2:
-                debug_print("AzureTTS", f"Fallback text synthesis also failed: {e2}")
+                print(f"Fallback text synthesis also failed: {e2}")
             return None
 
         if result.reason == speechsdk.ResultReason.Canceled:
@@ -201,7 +201,8 @@ class SpeechToTextManager:
             if speech_recognition_result.reason == speechsdk.ResultReason.RecognizedSpeech:
                 recognized_text += speech_recognition_result.text + " "
             elif speech_recognition_result.reason == speechsdk.ResultReason.NoMatch:
-                debug_print("AzureTTS", "No speech could be recognized.")
+                if not recognized_text:
+                    debug_print("AzureTTS", "No speech could be recognized.")
             elif speech_recognition_result.reason == speechsdk.ResultReason.Canceled:
                 if get_debug():
                     cancellation_details = speech_recognition_result.cancellation_details

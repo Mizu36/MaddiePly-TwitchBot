@@ -37,7 +37,7 @@ class MessageScheduler():
                 task = asyncio.create_task(self.scheduled_message_task(message=text, minutes=minutes, messages=messages, task_id=task_id))
                 self.tasks.append({"task_id": task_id, "task": task, "message_count": 0})
             except Exception as e:
-                debug_print("MessageScheduler", f"Error creating scheduled task for id {task_id}: {e}")
+                print(f"Error creating scheduled task for id {task_id}: {e}")
         else:
             debug_print("MessageScheduler", f"Returned object for scheduled message id {task_id} is None.")
 
@@ -83,12 +83,12 @@ class MessageScheduler():
                     debug_print("MessageScheduler", f"Cancelling task object for id {message_id}: {t}")
                     t.cancel()
                 except Exception as e:
-                    debug_print("MessageScheduler", f"Error cancelling task for id {message_id}: {e}")
+                    print(f"Error cancelling task for id {message_id}: {e}")
                 try:
                     self.tasks.remove(task)
                     removed = True
                 except Exception as e:
-                    debug_print("MessageScheduler", f"Error removing task entry for id {message_id}: {e}")
+                    print(f"Error removing task entry for id {message_id}: {e}")
         if not removed:
             debug_print("MessageScheduler", f"No active task found for id {message_id} to cancel.")
 
