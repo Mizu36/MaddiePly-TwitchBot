@@ -47,7 +47,7 @@ import tempfile
 
 from datetime import datetime
 from tools import debug_print, get_random_number, get_reference, set_reference, path_from_app_root
-from db import get_custom_reward, get_bit_reward, get_prompt, get_setting, get_specific_user_data, set_user_data, increment_user_stat, user_exists, get_specific_user_data
+from db import get_custom_reward, get_bit_reward, get_setting
 from meme_creator import make_meme
 from typing import Literal
 from PIL import Image, ImageDraw, ImageFont
@@ -76,6 +76,8 @@ CODE_BEHAVIOR = {
     "WT": {"db_inputs": 1},  # Wait duration
     "VO": {"db_inputs": 0, "compose": lambda _val: USER_INPUT_PLACEHOLDER},  # Viewer message only
     "TO": {"db_inputs": 1, "compose": _compose_timeout_payload},  # Timeout requires seconds + viewer message
+    "GS": {"db_inputs": 1},  # Change Gacha Set
+    "GP": {"db_inputs": 0},  # Gacha Pull
 }
 
 GENERATION_TOKENS = {"AV", "AI", "API", "IC", "IPA", "GM", "VO"}
@@ -194,6 +196,7 @@ def _get_payload_user_text(payload):
     return None
 
 class CustomPointRedemptionBuilder():
+    _AUDIO_FILE_EXTENSIONS = (".mp3", ".wav", ".ogg", ".flac")
     def __init__(self):
         self.code_behavior = CODE_BEHAVIOR
         self.response_manager = get_reference("ResponseTimer")
@@ -205,6 +208,8 @@ class CustomPointRedemptionBuilder():
         self.chatGPT = get_reference("GPTManager")
         self.obs_manager = get_reference("OBSManager")
         self.audio_manager = get_reference("AudioManager")
+        self.gacha_handler = get_reference("GachaHandler")
+        self.online_database = get_reference("OnlineDatabase")
         self.discord_bot = None
         self.media_dir = path_from_app_root("media")
         self.media_dir.mkdir(exist_ok=True)
@@ -345,6 +350,20 @@ class CustomPointRedemptionBuilder():
                 return True
         return False
 
+    def _normalize_audio_fx_name(self, file_name: str | None) -> str:
+        """Strip known audio extensions so AudioManager can locate the asset."""
+        if not isinstance(file_name, str):
+            return ""
+        candidate = file_name.strip()
+        if not candidate:
+            return ""
+        lowered = candidate.lower()
+        for ext in self._AUDIO_FILE_EXTENSIONS:
+            if lowered.endswith(ext):
+                candidate = candidate[: -len(ext)].strip()
+                break
+        return candidate
+
     def _voice_duration_for_cache(self, event: dict | None, cache_key: str | None) -> float | None:
         if not event or not cache_key:
             return None
@@ -483,7 +502,7 @@ class CustomPointRedemptionBuilder():
                 header_text,
             )
         except Exception as exc:
-            debug_print("CustomBuilder", f"Failed to compose voice overlay image: {exc}")
+            print(f"Failed to compose voice overlay image: {exc}")
             return None
 
     def _compose_voice_overlay_image(self, username: str, message: str, header_text: str) -> str:
@@ -825,15 +844,47 @@ class CustomPointRedemptionBuilder():
         elif type == "custom":
             redemption_name = payload.reward.title
             points = payload.reward.cost
-        
-        user_id = payload.user.id
-        if not await user_exists(user_id):
+
+        change_set_name = await get_setting("Gacha Change Set Redemption Name", "Change Gacha Set")
+        gacha_pull_name = await get_setting("Gacha Pull Redemption Name", "Gacha Pull")
+        gacha_enabled = await get_setting("Gacha System Enabled", False)
+        if not gacha_enabled and redemption_name in [change_set_name, gacha_pull_name]:
+            debug_print("CustomBuilder", f"Gacha system is disabled; ignoring redemption: {redemption_name}")
             try:
-                date = payload.timestamp.date().strftime("%Y-%m-%d")
-            except Exception:
-                date = datetime.now().date().strftime("%Y-%m-%d")
-            await set_user_data(user_id=user_id, username=payload.user.name, display_name=payload.user.display_name, date_added=date, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0)
-        await increment_user_stat(user_id=user_id, stat="points", amount=points)
+                payload.refund(token_for=self.bot.owner_id)
+            except Exception as e:
+                print(f"Failed to refund redemption for disabled gacha system: {e}")
+            return
+        user_id = payload.user.id
+
+        if not self.online_database:
+            self.online_database = get_reference("OnlineDatabase")
+        if not self.event_manager:
+            self.event_manager = get_reference("EventManager")
+        if not self.gacha_handler:
+            self.gacha_handler = get_reference("GachaHandler")
+
+        if not await self.online_database.user_exists(user_id):
+            debug_print("CustomBuilder", f"User ID: {user_id} does not exist in the database. Creating user entry.")
+            data = {"twitch_username": payload.user.name, "twitch_display_name": payload.user.display_name, "active_gacha_set": "humble beginnings"}
+            await self.online_database.create_user(user_id, data)
+
+        await self.online_database.increment_column(table="users", column_filter="twitch_id", value=user_id, column_to_increment="channel_points_redeemed", increment_by=points)
+        if not self.gacha_handler:
+            debug_print("CustomBuilder", "GachaHandler reference missing or is disabled.")
+        else:
+            if redemption_name == change_set_name:
+                if self.gacha_handler:
+                    await self.gacha_handler.handle_gacha_set_change(payload)
+                return
+            elif redemption_name == gacha_pull_name:
+                if not self.gacha_handler:
+                    self.gacha_handler = get_reference("GachaHandler")
+                if self.gacha_handler:
+                    event = await self.gacha_handler.roll_for_gacha(twitch_user_id=user_id, num_pulls=1)
+                    self.event_manager.add_event(event)
+                return
+        
         custom_reward = await get_custom_reward(redemption_name, "channel_points")
         if not custom_reward:
             return
@@ -852,28 +903,37 @@ class CustomPointRedemptionBuilder():
                 "user_input_raw": raw_user_input,
                 "event_type": f"channel point redemption of {redemption_name} by {payload.user.display_name}"
             }
-            if not self.event_manager:
-                self.event_manager = get_reference("EventManager")
             try:
                 debug_print("CustomBuilder", f"Pre-generating assets for redemption event code: {event['code']}")
                 await self.run_custom_redemption(event, execute=False)
             except Exception as precache_err:
-                debug_print("CustomBuilder", f"Pre-generation failed: {precache_err}")
+                print(f"Pre-generation failed: {precache_err}")
             self.event_manager.add_event(event)
         except Exception as e:
-            debug_print("CustomBuilder", f"channel_points_redemption_handler error: {e}")
+            print(f"channel_points_redemption_handler error: {e}")
         return
     
     async def handle_cheer(self, payload):
         bits = payload.bits
         user_id = payload.user.id
-        if not await user_exists(user_id):
-            try:
-                date = payload.timestamp.date().strftime("%Y-%m-%d")
-            except Exception:
-                date = datetime.now().date().strftime("%Y-%m-%d")
-            await set_user_data(user_id=user_id, username=payload.user.name, display_name=payload.user.display_name, date_added=date, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0)
-        user_data = await get_specific_user_data(user_id=user_id, field="bits_donated")
+        gacha_task = None
+        if not self.online_database:
+            self.online_database = get_reference("OnlineDatabase")
+        await self.online_database.increment_column(table="users", column_filter="twitch_id", value=payload.user.id, column_to_increment="bits_donated", increment_by=bits)
+        if bits >= 500:
+            number_of_rolls = bits // 500
+        if not self.gacha_handler:
+            self.gacha_handler = get_reference("GachaHandler")
+
+        if not await self.online_database.user_exists(user_id):
+            debug_print("CustomBuilder", f"User ID: {user_id} does not exist in the database. Creating user entry.")
+            data = {"twitch_username": payload.user.name, "twitch_display_name": payload.user.display_name, "active_gacha_set": "humble beginnings"}
+            await self.online_database.create_user(user_id, data)
+        if self.gacha_handler and await get_setting("Gacha System Enabled", False):
+            gacha_task = asyncio.create_task(self.gacha_handler.roll_for_gacha(payload.user.id, number_of_rolls, bits_toward_next_pull=bits % 500))
+        if not self.online_database:
+            self.online_database = get_reference("OnlineDatabase")
+        user_data = await self.online_database.get_specific_user_data(twitch_user_id=user_id, field="bits_donated")
         override = False
         if user_data in [0, None]:
             if not self.twitch_bot:
@@ -882,13 +942,23 @@ class CustomPointRedemptionBuilder():
             if temp_bits and temp_bits > 0 and temp_bits > bits:
                 bits = temp_bits
                 override = True
-        await increment_user_stat(user_id=user_id, stat="bits", amount=bits, override=override)
+        if override:
+            await self.online_database.create_user(user_id, {"bits_donated": bits})
+        else:
+            await self.online_database.increment_column(table="users", column_filter="twitch_id", value=user_id, column_to_increment="bits_donated", increment_by=bits)
         custom_reward = await get_bit_reward(bits)
         if not custom_reward:
+            #Fallback: Uses default customizable cheer response
             event = {"type": "cheer", "user": payload.user.display_name, "event": payload}
             if not self.assistant:
                 self.assistant = get_reference("AssistantManager")
             asyncio.create_task(self.assistant.generate_voiced_response(event))
+            if gacha_task:
+                if isinstance(gacha_task, asyncio.Task):
+                    gacha_event = await gacha_task
+                else:
+                    gacha_event = gacha_task
+                self.event_manager.add_event(gacha_event)
             return
         # Build parsed methods and delegate execution to run_custom_redemption
         try:
@@ -910,10 +980,16 @@ class CustomPointRedemptionBuilder():
             try:
                 await self.run_custom_redemption(event, execute=False)
             except Exception as precache_err:
-                debug_print("CustomBuilder", f"Pre-generation failed: {precache_err}")
+                print(f"Pre-generation failed: {precache_err}")
             self.event_manager.add_event(event)
+            if gacha_task:
+                if isinstance(gacha_task, asyncio.Task):
+                    gacha_event = await gacha_task
+                else:
+                    gacha_event = gacha_task
+                self.event_manager.add_event(gacha_event)
         except Exception as e:
-            debug_print("CustomBuilder", f"handle_cheer error: {e}")
+            print(f"handle_cheer error: {e}")
         return
     
     async def run_custom_redemption(self, event: dict, execute: bool = True):
@@ -1170,7 +1246,7 @@ class CustomPointRedemptionBuilder():
 
             return
         except Exception as e:
-            debug_print("CustomBuilder", f"run_custom_redemption error: {e}")
+            print(f"run_custom_redemption error: {e}")
             return
     
     async def string_builder(self, payload, text: str) -> str:
@@ -1310,7 +1386,9 @@ class CustomPointRedemptionBuilder():
             if not self.azure_manager:
                 self.azure_manager = get_reference("SpeechToTextManager")
             if use == "viewer" and user_id:
-                voice = await get_specific_user_data(user_id=user_id, field="tts_voice")
+                if not self.online_database:
+                    self.online_database = get_reference("OnlineDatabase")
+                voice = await self.online_database.get_specific_user_data(twitch_user_id=user_id, field="tts_voice")
             else:
                 voice = None
             if not voice:
@@ -1356,7 +1434,7 @@ class CustomPointRedemptionBuilder():
         if cache is None:
             if not self.chatGPT:
                 self.chatGPT = get_reference("GPTManager")
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, [{"role": "user", "content": prompt}], False)
+            chatGPT = asyncio.to_thread(self.chatGPT.chat, [{"role": "user", "content": prompt}])
             response = await chatGPT
             if not response:
                 print("Failed to generate text response.")
@@ -1386,11 +1464,10 @@ class CustomPointRedemptionBuilder():
         debug_print("CustomBuilder", "Generating AI voiced response with personality...")
         cache = self._get_cached_asset(event, cache_key)
         if cache is None:
-            personality_prompt = await get_prompt("Personality Prompt")
-            full_prompt = [{"role": "system", "content": personality_prompt}, {"role": "user", "content": prompt}]
+            full_prompt = [{"role": "user", "content": prompt}]
             if not self.chatGPT:
                 self.chatGPT = get_reference("GPTManager")
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, full_prompt, False)
+            chatGPT = asyncio.to_thread(self.chatGPT.chat, full_prompt)
             response = await chatGPT
             if not response:
                 print("Failed to generate text response.")
@@ -1428,7 +1505,7 @@ class CustomPointRedemptionBuilder():
         if cache is None:
             if not self.chatGPT:
                 self.chatGPT = get_reference("GPTManager")
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, [{"role": "user", "content": prompt}], False)
+            chatGPT = asyncio.to_thread(self.chatGPT.chat, [{"role": "user", "content": prompt}])
             response = await chatGPT
             if not response:
                 return None
@@ -1452,12 +1529,10 @@ class CustomPointRedemptionBuilder():
         debug_print("CustomBuilder", f"Generating AI chat response with personality for: {prompt}")
         cache = self._get_cached_asset(event, cache_key)
         if cache is None:
-            personality_prompt = await get_prompt("Personality Prompt")
-            twitch_emotes = await get_prompt("Twitch Emotes")
-            full_prompt = [{"role": "system", "content": personality_prompt}, {"role": "system", "content": twitch_emotes},{"role": "user", "content": prompt}]
+            full_prompt = [{"role": "user", "content": prompt}]
             if not self.chatGPT:
                 self.chatGPT = get_reference("GPTManager")
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, full_prompt, False)
+            chatGPT = asyncio.to_thread(self.chatGPT.chat, full_prompt, use_twitch_emotes=True)
             response = await chatGPT
             if not response:
                 return None
@@ -1538,7 +1613,11 @@ class CustomPointRedemptionBuilder():
         cache_key: str | None = None,
     ):
         """Plays an audio file from media/soundFX directory, honoring any requested delay."""
-        debug_print("CustomBuilder", f"Playing audio file: {file_name}")
+        sound_name = self._normalize_audio_fx_name(file_name)
+        if not sound_name:
+            debug_print("CustomBuilder", f"play_audio_file received invalid filename '{file_name}'.")
+            return None
+        debug_print("CustomBuilder", f"Playing audio file request: {file_name} -> {sound_name}")
         if not self.audio_manager:
             self.audio_manager = get_reference("AudioManager")
         if not self.audio_manager:
@@ -1556,23 +1635,23 @@ class CustomPointRedemptionBuilder():
                 prepared_map[cache_key] = asset
 
         if prepared_asset is None and self.audio_manager:
-            cached = self.audio_manager.get_prepared_sound_fx(file_name)
+            cached = self.audio_manager.get_prepared_sound_fx(sound_name)
             if cached:
                 prepared_asset = cached
-                debug_print("CustomBuilder", f"Using global audio cache for '{file_name}'.")
+                debug_print("CustomBuilder", f"Using global audio cache for '{sound_name}'.")
 
         if not execute:
             if prepared_asset is None:
-                prepared_asset = await self.audio_manager.prepare_sound_fx(file_name)
+                prepared_asset = await self.audio_manager.prepare_sound_fx(sound_name)
                 _remember_prepared(prepared_asset)
             return prepared_asset
 
         prepare_task = None
         if prepared_asset is None:
-            prepare_task = asyncio.create_task(self.audio_manager.prepare_sound_fx(file_name))
-            debug_print("CustomBuilder", f"No cached audio for '{file_name}', preparing asynchronously.")
+            prepare_task = asyncio.create_task(self.audio_manager.prepare_sound_fx(sound_name))
+            debug_print("CustomBuilder", f"No cached audio for '{sound_name}', preparing asynchronously.")
         else:
-            debug_print("CustomBuilder", f"Using cached audio asset for '{file_name}'.")
+            debug_print("CustomBuilder", f"Using cached audio asset for '{sound_name}'.")
 
         try:
             sync_audio_to_ready = await get_setting("Sync Audio To Display Ready", False)
@@ -1619,7 +1698,7 @@ class CustomPointRedemptionBuilder():
             _remember_prepared(prepared_asset)
 
         await self.audio_manager.play_sound_fx_by_name(
-            file_name,
+            sound_name,
             prepared_asset=prepared_asset,
         )
         if prepared_map is not None and cache_key:
@@ -1741,7 +1820,7 @@ class CustomPointRedemptionBuilder():
                     try:
                         task.result()
                     except Exception as exc:
-                        debug_print("CustomBuilder", f"Voice overlay task encountered an error: {exc}")
+                        print(f"Voice overlay task encountered an error: {exc}")
 
                 overlay_task.add_done_callback(_overlay_done)
 

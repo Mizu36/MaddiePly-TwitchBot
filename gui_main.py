@@ -32,6 +32,7 @@ from tools import set_debug, debug_print, get_random_number, get_reference, path
 from db import get_database_loop
 import typing
 import testing
+from online_db import OnlineDatabase
 
 # Pending coroutines that need to be scheduled on the DB/bot loop when it
 # becomes available. Stored as list of (coro, description) for debugging.
@@ -132,6 +133,13 @@ CUSTOM_BUILDER = [
 
 TESTING_BUTTON_GROUPS = [
     (
+        "Gacha",
+        [
+            ("Gacha Pull Redemption", testing.test_gacha_pull_redemption),
+            ("Random Bits Donation", testing.test_gacha_bits_cheer),
+        ],
+    ),
+    (
         "Chat / Cheers / Subs",
         [
             ("Chat Message", testing.test_chat_message),
@@ -230,6 +238,22 @@ TESTING_BUTTON_GROUPS = [
         ],
     ),
 ]
+
+GACHA_RARITY_ORDER = [
+    ("UR", "Legendary"),
+    ("SSR", "Epic"),
+    ("SR", "Rare"),
+    ("R", "Uncommon"),
+    ("N", "Common"),
+]
+GACHA_RARITY_LABELS = {code: label for code, label in GACHA_RARITY_ORDER}
+
+# Flip these once the gacha system is production-ready so the toggle re-enables itself.
+GACHA_SYSTEM_READY = False
+GACHA_SYSTEM_SETTING_KEY = "Gacha System Enabled"
+GACHA_SYSTEM_DISABLED_TOOLTIP = (
+    "The gacha system isn't complete yet, so it can't be enabled right now."
+)
 
 ROW_STRIPE_LIGHT = "#ffffff"
 ROW_STRIPE_DARK = "#f6f6f6"
@@ -357,6 +381,7 @@ class DBEditor(tk.Tk):
         self._settings_tooltip = None
         self._settings_tooltip_label = None
         self._openai_model_choices: list[str] | None = None
+        self.gacha_widgets: dict[str, typing.Any] | None = None
 
         # Ensure we close DB and other resources on window close
         try:
@@ -575,6 +600,8 @@ class DBEditor(tk.Tk):
         self.bind_all("<Button-5>", _on_tools_mousewheel, add="+")
 
         self._build_testing_tools(tools_scrollable)
+
+        self._build_gacha_tab()
 
         # Hotkeys tab
         hotkeys_frame = ttk.Frame(self.nb)
@@ -1242,6 +1269,7 @@ class DBEditor(tk.Tk):
                 "Scheduled Messages",
                 "Custom Redemption Builder",
                 "Twitch Users",
+                "Gacha",
                 "Randomizer",
                 "Hotkeys",
                 "Prompts",
@@ -1327,6 +1355,308 @@ class DBEditor(tk.Tk):
                     group_box.columnconfigure(col, weight=1)
         except Exception as exc:
             debug_print("GUITesting", f"Failed to build testing tools: {exc}")
+
+    def _build_gacha_tab(self) -> None:
+        gacha_frame = ttk.Frame(self.nb)
+        self.nb.add(gacha_frame, text="Gacha")
+
+        toolbar = ttk.Frame(gacha_frame)
+        toolbar.pack(fill=tk.X, padx=6, pady=6)
+        ttk.Button(toolbar, text="Refresh", command=self.refresh_gacha_tab).pack(side=tk.LEFT, padx=4)
+        status_var = tk.StringVar(value="Loading gacha data…")
+        ttk.Label(toolbar, textvariable=status_var).pack(side=tk.RIGHT, padx=4)
+
+        body = ttk.Frame(gacha_frame)
+        body.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
+        canvas = tk.Canvas(body, borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(body, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        content = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def _update_scrollregion(_event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _resize_canvas(event):
+            canvas.itemconfigure(window_id, width=event.width)
+
+        content.bind("<Configure>", _update_scrollregion)
+        canvas.bind("<Configure>", _resize_canvas)
+
+        self.gacha_widgets = {
+            "frame": gacha_frame,
+            "content": content,
+            "status_var": status_var,
+            "sections": {},
+        }
+
+        self.refresh_gacha_tab()
+
+    def refresh_gacha_tab(self) -> None:
+        if not self.gacha_widgets:
+            return
+        content: ttk.Frame = self.gacha_widgets["content"]
+        for child in content.winfo_children():
+            child.destroy()
+        self.gacha_widgets["sections"] = {}
+        status_var: tk.StringVar = self.gacha_widgets["status_var"]
+        status_var.set("Loading gacha data…")
+
+        def worker():
+            try:
+                data = self._fetch_gacha_sets()
+            except Exception as exc:
+                self.after(0, lambda: self._handle_gacha_update_error(None, None, exc))
+                return
+            self.after(0, lambda: self._apply_gacha_sets(data))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _fetch_gacha_sets(self) -> dict[str, list[dict[str, typing.Any]]]:
+        async def _job(db: OnlineDatabase):
+            set_names = await db.get_all_gacha_sets()
+            result: dict[str, list[dict[str, typing.Any]]] = {}
+            for set_name in (set_names or []):
+                rows = await db.fetch_data("gacha", "set_name", value=set_name)
+                result[set_name] = rows or []
+            return result
+
+        return self._run_online_db_task(_job) or {}
+
+    def _apply_gacha_sets(self, data: dict[str, list[dict[str, typing.Any]]]) -> None:
+        if not self.gacha_widgets:
+            return
+        content: ttk.Frame = self.gacha_widgets["content"]
+        for child in content.winfo_children():
+            child.destroy()
+        sections: dict[str, dict[str, typing.Any]] = {}
+        if not data:
+            ttk.Label(
+                content,
+                text="No gacha sets found. Please add entries in Supabase.",
+                foreground="#666666",
+            ).pack(anchor=tk.W, padx=8, pady=8)
+            self.gacha_widgets["status_var"].set("No gacha sets available.")
+            self.gacha_widgets["sections"] = sections
+            return
+
+        for set_name in sorted(data.keys(), key=lambda name: name.lower()):
+            rows = data.get(set_name) or []
+            sections[set_name] = self._create_gacha_set_section(content, set_name, rows)
+
+        self.gacha_widgets["sections"] = sections
+        self.gacha_widgets["status_var"].set(f"Loaded {len(sections)} gacha set(s).")
+
+    def _create_gacha_set_section(
+        self,
+        parent: ttk.Frame,
+        set_name: str,
+        rows: list[dict[str, typing.Any]],
+    ) -> dict[str, typing.Any]:
+        section = ttk.Frame(parent, relief=tk.GROOVE, borderwidth=1)
+        section.pack(fill=tk.X, padx=6, pady=4)
+
+        header = ttk.Frame(section)
+        header.pack(fill=tk.X, padx=6, pady=4)
+        arrow_var = tk.StringVar(value=">")
+        body = ttk.Frame(section)
+        row_vars: list[dict[str, typing.Any]] = []
+
+        def _toggle_body():
+            if body.winfo_manager():
+                body.forget()
+                arrow_var.set(">")
+            else:
+                body.pack(fill=tk.X, padx=30, pady=(0, 8))
+                arrow_var.set("v")
+
+        ttk.Button(header, textvariable=arrow_var, width=2, command=_toggle_body).pack(side=tk.LEFT)
+        ttk.Label(
+            header,
+            text=self._format_gacha_name(set_name),
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        ).pack(side=tk.LEFT, padx=(6, 0))
+
+        set_var = tk.BooleanVar(value=self._are_all_gachas_enabled(rows))
+        set_chk = ttk.Checkbutton(
+            header,
+            text="Enabled",
+            variable=set_var,
+            command=lambda: self._toggle_gacha_set(set_name, set_var, row_vars),
+        )
+        set_chk.pack(side=tk.RIGHT)
+
+        if not rows:
+            set_chk.state(["disabled"])
+            ttk.Label(body, text="No gacha entries in this set.", foreground="#666666").pack(anchor=tk.W, padx=6, pady=4)
+        else:
+            grouped_rows = self._group_gacha_rows_by_rarity(rows)
+            for rarity_code, rarity_label, rarity_rows in grouped_rows:
+                group_box = ttk.LabelFrame(body, text=f"{rarity_label} ({rarity_code})")
+                group_box.pack(fill=tk.X, padx=4, pady=(6, 4))
+                for row in sorted(rarity_rows, key=lambda r: (str(r.get("name")) or "").lower()):
+                    entry_frame = ttk.Frame(group_box)
+                    entry_frame.pack(fill=tk.X, pady=2)
+                    ttk.Label(entry_frame, text=self._format_gacha_name(row.get("name")), anchor="w").pack(
+                        side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8)
+                    )
+                    entry_var = tk.BooleanVar(value=bool(row.get("enabled")))
+                    ttk.Checkbutton(
+                        entry_frame,
+                        variable=entry_var,
+                        command=lambda r=row, v=entry_var: self._toggle_single_gacha(r, v, set_var, row_vars),
+                    ).pack(side=tk.RIGHT)
+                    row_vars.append({"var": entry_var, "row": row})
+
+        section_data = {
+            "frame": section,
+            "body": body,
+            "arrow_var": arrow_var,
+            "set_var": set_var,
+            "rows": row_vars,
+            "set_name": set_name,
+        }
+        body.forget()
+        arrow_var.set(">")
+        return section_data
+
+    def _group_gacha_rows_by_rarity(
+        self,
+        rows: list[dict[str, typing.Any]],
+    ) -> list[tuple[str, str, list[dict[str, typing.Any]]]]:
+        grouped: dict[str, list[dict[str, typing.Any]]] = {code: [] for code in GACHA_RARITY_LABELS}
+        misc: list[dict[str, typing.Any]] = []
+        for row in rows:
+            rarity = str(row.get("rarity") or "").upper()
+            bucket = grouped.get(rarity)
+            if bucket is not None:
+                bucket.append(row)
+            else:
+                misc.append(row)
+        ordered: list[tuple[str, str, list[dict[str, typing.Any]]]] = []
+        for code, label in GACHA_RARITY_ORDER:
+            bucket = grouped[code]
+            if bucket:
+                ordered.append((code, label, bucket))
+        if misc:
+            ordered.append(("OTHER", "Other", misc))
+        return ordered
+
+    @staticmethod
+    def _format_gacha_name(raw_name: typing.Any) -> str:
+        if not raw_name:
+            return "(Unnamed)"
+        return str(raw_name).replace("_", " ").title()
+
+    @staticmethod
+    def _are_all_gachas_enabled(rows: list[dict[str, typing.Any]]) -> bool:
+        states = [bool(row.get("enabled")) for row in rows if row is not None]
+        return bool(states) and all(states)
+
+    def _toggle_gacha_set(
+        self,
+        set_name: str,
+        set_var: tk.BooleanVar,
+        row_vars: list[dict[str, typing.Any]],
+    ) -> None:
+        if not self.gacha_widgets:
+            return
+        new_value = set_var.get()
+        previous = not new_value
+        self.gacha_widgets["status_var"].set(f"Updating set '{self._format_gacha_name(set_name)}'…")
+
+        def worker():
+            try:
+                self._run_online_db_task(
+                    lambda db: db.update_data("gacha", "set_name", set_name, {"enabled": new_value})
+                )
+            except Exception as exc:
+                self.after(0, lambda: self._handle_gacha_update_error(set_var, previous, exc))
+                return
+            self.after(0, lambda: self._after_set_toggle_success(set_name, new_value, row_vars))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_gacha_update_error(
+        self,
+        target_var: tk.BooleanVar | None,
+        previous_value: bool | None,
+        exc: Exception,
+    ) -> None:
+        message = str(exc)
+        if target_var is not None and previous_value is not None:
+            target_var.set(previous_value)
+        if self.gacha_widgets:
+            self.gacha_widgets["status_var"].set("Update failed. See details below.")
+        debug_print("GUI", f"Gacha update failed: {message}")
+        messagebox.showerror("Gacha Update Failed", f"Unable to update gacha data.\n{message}")
+
+    def _after_set_toggle_success(
+        self,
+        set_name: str,
+        enabled: bool,
+        row_vars: list[dict[str, typing.Any]],
+    ) -> None:
+        for entry in row_vars:
+            entry["var"].set(enabled)
+            entry["row"]["enabled"] = enabled
+        if self.gacha_widgets:
+            state_text = "Enabled" if enabled else "Disabled"
+            self.gacha_widgets["status_var"].set(f"{state_text} set '{self._format_gacha_name(set_name)}'.")
+
+    def _toggle_single_gacha(
+        self,
+        row: dict[str, typing.Any],
+        entry_var: tk.BooleanVar,
+        set_var: tk.BooleanVar,
+        row_vars: list[dict[str, typing.Any]],
+    ) -> None:
+        if not self.gacha_widgets:
+            return
+        new_value = entry_var.get()
+        previous = not new_value
+        gacha_name = self._format_gacha_name(row.get("name"))
+        set_name = row.get("set_name", "")
+        self.gacha_widgets["status_var"].set(f"Updating '{gacha_name}'…")
+
+        def worker():
+            try:
+                self._run_online_db_task(
+                    lambda db: db.update_data("gacha", "id", row.get("id"), {"enabled": new_value})
+                )
+            except Exception as exc:
+                self.after(0, lambda: self._handle_gacha_update_error(entry_var, previous, exc))
+                return
+            self.after(0, lambda: self._after_single_gacha_toggle(row, new_value, set_var, row_vars, gacha_name, set_name))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_single_gacha_toggle(
+        self,
+        row: dict[str, typing.Any],
+        enabled: bool,
+        set_var: tk.BooleanVar,
+        row_vars: list[dict[str, typing.Any]],
+        gacha_name: str,
+        set_name: str,
+    ) -> None:
+        row["enabled"] = enabled
+        self._sync_set_checkbox_state(set_var, row_vars)
+        if self.gacha_widgets:
+            state_text = "Enabled" if enabled else "Disabled"
+            set_label = self._format_gacha_name(set_name)
+            self.gacha_widgets["status_var"].set(f"{state_text} {gacha_name} (Set: {set_label}).")
+
+    @staticmethod
+    def _sync_set_checkbox_state(set_var: tk.BooleanVar, row_vars: list[dict[str, typing.Any]]) -> None:
+        if not row_vars:
+            set_var.set(False)
+            return
+        set_var.set(all(entry["var"].get() for entry in row_vars))
 
     def open_custom_redemption_editor(self, mode: str = "add") -> None:
         """Open the Custom Redemption Add/Edit builder.
@@ -4230,19 +4560,28 @@ class DBEditor(tk.Tk):
                 key == "Google Sheets Integration Enabled"
                 and not getattr(self, "_google_credentials_valid", True)
             )
+            gacha_toggle_locked = (not GACHA_SYSTEM_READY and key == GACHA_SYSTEM_SETTING_KEY)
+            disabled_tooltip = None
             if disable_google_checkbox:
                 try:
                     var.set(False)
                 except Exception:
                     pass
-            cb = ttk.Checkbutton(container, variable=var)
-            cb.grid(row=grid_row, column=1, sticky=tk.W, padx=4, pady=2)
-
-            if disable_google_checkbox:
-                tooltip_msg = (
+                disabled_tooltip = (
                     self._google_credentials_error
                     or "Google Sheets credentials.json is missing or invalid. Required keys: type, project_id, private_key_id, private_key."
                 )
+            elif gacha_toggle_locked:
+                try:
+                    var.set(False)
+                except Exception:
+                    pass
+                disabled_tooltip = GACHA_SYSTEM_DISABLED_TOOLTIP
+
+            cb = ttk.Checkbutton(container, variable=var)
+            cb.grid(row=grid_row, column=1, sticky=tk.W, padx=4, pady=2)
+
+            if disabled_tooltip:
                 try:
                     cb.state(["disabled"])
                 except Exception:
@@ -4252,7 +4591,7 @@ class DBEditor(tk.Tk):
                 except Exception:
                     pass
 
-                def _show_disabled_tooltip(event, text=tooltip_msg):
+                def _show_disabled_tooltip(event, text=disabled_tooltip):
                     self._show_settings_tooltip(text, event.x_root, event.y_root)
 
                 def _hide_disabled_tooltip(_event):
@@ -4469,6 +4808,26 @@ class DBEditor(tk.Tk):
                 debug_print("GUI", f"Scheduled ResponseTimer {'start' if should_enable else 'stop'} after UI toggle.")
             except Exception as e:
                 debug_print("GUI", f"Failed to schedule ResponseTimer update: {e}")
+            return
+
+        if key == GACHA_SYSTEM_SETTING_KEY:
+            if not GACHA_SYSTEM_READY:
+                debug_print("GUI", "Gacha setting toggled while system is flagged incomplete; ignoring.")
+                return
+            try:
+                handler = get_reference("CommandHandler")
+            except Exception:
+                handler = None
+            if handler is None:
+                debug_print("GUI", "Gacha setting toggled but CommandHandler reference is unavailable.")
+                return
+            try:
+                coro = handler.start_gacha_system() if should_enable else handler.end_gacha_system()
+            except Exception as exc:
+                debug_print("GUI", f"Unable to prepare gacha coroutine: {exc}")
+                return
+            if not self._schedule_async_task(coro, "GachaSystemToggle"):
+                debug_print("GUI", "Failed to schedule gacha system update after toggle.")
             return
 
         if key == "Event Queue Enabled":
@@ -5327,41 +5686,47 @@ class DBEditor(tk.Tk):
 
         self.refresh_users_tab()
 
+    def _run_online_db_task(
+        self,
+        task: typing.Callable[[OnlineDatabase], typing.Awaitable[typing.Any]],
+    ) -> typing.Any:
+        """Execute a short-lived OnlineDatabase coroutine outside the main thread."""
+
+        async def _runner():
+            db = OnlineDatabase(register_reference=False)
+            try:
+                return await task(db)
+            finally:
+                await db.close()
+
+        return asyncio.run(_runner())
+
+    def _fetch_remote_users(self) -> list[dict[str, typing.Any]]:
+        """Fetch user rows directly from Supabase and sort by display name."""
+
+        def _job(db: OnlineDatabase):
+            return db.fetch_table("users", limit=5000)
+
+        rows: list[dict[str, typing.Any]] = self._run_online_db_task(_job) or []
+
+        def _sort_key(row: dict[str, typing.Any]) -> tuple[str, str]:
+            primary = row.get("twitch_display_name") or row.get("twitch_username") or row.get("username") or ""
+            secondary = row.get("twitch_id") or row.get("id") or ""
+            return (str(primary).casefold(), str(secondary).casefold())
+
+        return sorted(rows, key=_sort_key)
+
     def refresh_users_tab(self) -> None:
         if self.users_tree is None:
             return
 
         def worker():
-            rows = []
-            conn = None
+            rows: list[dict[str, typing.Any]] = []
             try:
-                conn = self.connect()
-                cursor = conn.execute(
-                    """
-                    SELECT
-                        id,
-                        username,
-                        display_name,
-                        discord_username,
-                        number_of_messages,
-                        bits_donated,
-                        months_subscribed,
-                        subscriptions_gifted,
-                        points_redeemed,
-                        tts_voice,
-                        date_added,
-                        sound_fx
-                    FROM users
-                    ORDER BY
-                        CASE WHEN display_name IS NULL OR display_name = '' THEN username ELSE display_name END COLLATE NOCASE
-                    """
-                )
-                rows = [dict(row) for row in cursor.fetchall()]
-            except Exception as e:
-                debug_print("GUI", f"Failed to fetch users: {e}")
-            finally:
-                if conn is not None:
-                    conn.close()
+                rows = self._fetch_remote_users()
+            except Exception as exc:
+                debug_print("GUI", f"Supabase user fetch failed: {exc}")
+                rows = []
             self.after(0, lambda rows=rows: self._apply_users_rows(rows))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -5373,28 +5738,58 @@ class DBEditor(tk.Tk):
             self.users_tree.delete(child)
         self.users_row_data = {}
         for idx, row in enumerate(rows):
-            user_id = str(row.get("id") or row.get("username") or idx)
-            display_name = row.get("display_name") or row.get("username") or "Unknown"
-            discord_username = row.get("discord_username") or ""
-            discord_status = "Linked" if discord_username and str(discord_username).strip().lower() != "null" else "Unlinked"
+            row_data = dict(row)
+            user_id = str(
+                row_data.get("twitch_id")
+                or row_data.get("id")
+                or row_data.get("username")
+                or idx
+            )
+            display_name = (
+                row_data.get("twitch_display_name")
+                or row_data.get("display_name")
+                or row_data.get("twitch_username")
+                or row_data.get("username")
+                or "Unknown"
+            )
+            discord_username = (
+                row_data.get("discord_username")
+                or row_data.get("discord_display_name")
+                or ""
+            )
+            discord_linked = bool(row_data.get("discord_id"))
+            if not discord_linked and not row_data.get("discord_id"):
+                discord_linked = bool(
+                    discord_username and str(discord_username).strip().lower() not in {"", "null"}
+                )
+            discord_status = "Linked" if discord_linked else "Unlinked"
             values = (
                 display_name,
                 discord_status,
-                row.get("number_of_messages") or 0,
-                row.get("bits_donated") or 0,
-                row.get("months_subscribed") or 0,
-                row.get("subscriptions_gifted") or 0,
-                row.get("points_redeemed") or 0,
-                row.get("tts_voice") or "",
-                row.get("date_added") or "",
-                row.get("sound_fx") or "",
+                row_data.get("twitch_number_of_messages")
+                or row_data.get("number_of_messages")
+                or 0,
+                row_data.get("bits_donated") or 0,
+                row_data.get("months_subscribed") or 0,
+                row_data.get("subs_gifted")
+                or row_data.get("subscriptions_gifted")
+                or 0,
+                row_data.get("channel_points_redeemed")
+                or row_data.get("points_redeemed")
+                or 0,
+                row_data.get("tts_voice") or "",
+                row_data.get("date_added")
+                or row_data.get("created_at")
+                or "",
+                row_data.get("chime") or row_data.get("sound_fx") or "",
             )
             tag = "even" if (idx % 2 == 0) else "odd"
             try:
                 self.users_tree.insert("", tk.END, iid=user_id, values=values, tags=(tag,))
             except Exception:
                 self.users_tree.insert("", tk.END, values=values, tags=(tag,))
-            self.users_row_data[user_id] = row
+            row_data["_tree_id"] = user_id
+            self.users_row_data[user_id] = row_data
         self.users_count_var.set(f"Total Viewers: {len(rows)}")
         self._autosize_users_columns()
 
@@ -5405,24 +5800,32 @@ class DBEditor(tk.Tk):
             return
         column = self.users_tree.identify_column(event.x)
         column_map = {
-            "#3": ("number_of_messages", "Messages Sent"),
-            "#4": ("bits_donated", "Bits Donated"),
-            "#5": ("months_subscribed", "Months Subscribed"),
-            "#6": ("subscriptions_gifted", "Subscriptions Gifted"),
-            "#7": ("points_redeemed", "Channel Points Redeemed"),
+            "#3": (("twitch_number_of_messages", "number_of_messages"), "Messages Sent"),
+            "#4": (("bits_donated",), "Bits Donated"),
+            "#5": (("months_subscribed",), "Months Subscribed"),
+            "#6": (("subs_gifted", "subscriptions_gifted"), "Subscriptions Gifted"),
+            "#7": (("channel_points_redeemed", "points_redeemed"), "Channel Points Redeemed"),
         }
         if column not in column_map:
             return
         item_id = self.users_tree.identify_row(event.y)
         if not item_id:
             return
-        field, label = column_map[column]
+        field_candidates, label = column_map[column]
         # Treeview columns use the identifiers from self.users_tree["columns"]
         col_name = self.users_tree["columns"][int(column.strip("#")) - 1]
         current_value = self.users_tree.set(item_id, col_name)
-        self._prompt_and_update_user_stat(str(item_id), field, label, current_value)
+        self._prompt_and_update_user_stat(
+            str(item_id), tuple(field_candidates), label, current_value
+        )
 
-    def _prompt_and_update_user_stat(self, user_id: str, field: str, label: str, current: str) -> None:
+    def _prompt_and_update_user_stat(
+        self,
+        user_id: str,
+        field_candidates: tuple[str, ...],
+        label: str,
+        current: str,
+    ) -> None:
         try:
             current_val = int(current)
         except Exception:
@@ -5436,22 +5839,44 @@ class DBEditor(tk.Tk):
         )
         if new_value is None:
             return
-        self._update_user_stat_value(user_id, field, label, new_value)
+        self._update_user_stat_value(user_id, field_candidates, label, new_value)
 
-    def _update_user_stat_value(self, user_id: str, field: str, label: str, value: int) -> None:
+    def _update_user_stat_value(
+        self,
+        user_id: str,
+        field_candidates: tuple[str, ...],
+        label: str,
+        value: int,
+    ) -> None:
         def worker():
-            conn = None
-            try:
-                conn = self.connect()
-                with conn:
-                    conn.execute(f"UPDATE users SET {field} = ? WHERE id = ?", (value, user_id))
-            except Exception as e:
-                debug_print("GUI", f"Failed to update {field} for user {user_id}: {e}")
+            row_snapshot = self.users_row_data.get(user_id, {})
+            field_name = field_candidates[0]
+            for candidate in field_candidates:
+                if candidate in row_snapshot:
+                    field_name = candidate
+                    break
+            if not row_snapshot:
+                debug_print("GUI", f"User row {user_id} missing; cannot update {field_name}.")
                 self.after(0, lambda: messagebox.showerror("Update Failed", f"Could not update {label}."))
                 return
-            finally:
-                if conn is not None:
-                    conn.close()
+            lookup_column = "twitch_id" if row_snapshot.get("twitch_id") else "id"
+            lookup_value = row_snapshot.get(lookup_column) or user_id
+            try:
+                self._run_online_db_task(
+                    lambda db: db.update_data(
+                        "users",
+                        lookup_column,
+                        lookup_value,
+                        {field_name: value},
+                    )
+                )
+            except Exception as exc:
+                debug_print(
+                    "GUI",
+                    f"Failed to update {field_name} for Supabase user {lookup_value}: {exc}",
+                )
+                self.after(0, lambda: messagebox.showerror("Update Failed", f"Could not update {label}."))
+                return
             self.after(0, self.refresh_users_tab)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -5469,18 +5894,22 @@ class DBEditor(tk.Tk):
             return
 
         def worker():
-            conn = None
-            try:
-                conn = self.connect()
-                conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-                conn.commit()
-            except Exception as e:
-                debug_print("GUI", f"Failed to remove user {user_id}: {e}")
+            row_snapshot = self.users_row_data.get(user_id, {})
+            if not row_snapshot:
                 self.after(0, lambda: messagebox.showerror("Remove User", "Could not remove the selected user."))
                 return
-            finally:
-                if conn is not None:
-                    conn.close()
+            lookup_column = "twitch_id" if row_snapshot.get("twitch_id") else "id"
+            lookup_value = row_snapshot.get(lookup_column) or user_id
+            try:
+                self._run_online_db_task(
+                    lambda db: db.delete_data("users", lookup_column, lookup_value)
+                )
+            except Exception as exc:
+                debug_print(
+                    "GUI", f"Failed to remove Supabase user {lookup_value}: {exc}"
+                )
+                self.after(0, lambda: messagebox.showerror("Remove User", "Could not remove the selected user."))
+                return
             self.after(0, self.refresh_users_tab)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -5500,10 +5929,19 @@ class DBEditor(tk.Tk):
         if not row:
             self._hide_users_tooltip()
             return
-        username = row.get("username") or "Unknown"
-        discord_name = row.get("discord_username")
-        if discord_name and str(discord_name).strip().lower() != "null":
-            tooltip_text = f"Twitch: {username}\nDiscord: {discord_name}"
+        username = (
+            row.get("twitch_username")
+            or row.get("username")
+            or row.get("twitch_id")
+            or "Unknown"
+        )
+        discord_name = (
+            row.get("discord_username")
+            or row.get("discord_display_name")
+            or ""
+        )
+        if row.get("discord_id"):
+            tooltip_text = f"Twitch: {username}\nDiscord: {discord_name or '(unknown username)'}"
         else:
             tooltip_text = f"Twitch: {username}\nDiscord: Not linked"
         self._show_users_tooltip(tooltip_text, event.x_root, event.y_root)
@@ -5656,19 +6094,13 @@ class DBEditor(tk.Tk):
         self._purge_users_thread.start()
 
     def _purge_invalid_users_worker(self) -> None:
-        conn = None
-        rows = []
         try:
-            conn = self.connect()
-            cursor = conn.execute("SELECT id, username FROM users")
-            rows = [dict(row) for row in cursor.fetchall()]
-        except Exception as e:
-            debug_print("GUI", f"Failed to load users for purge: {e}")
-            self.after(0, lambda: (self._enable_purge_button(), messagebox.showerror("Purge Failed", "Could not load users from database.")))
+            rows = self._run_online_db_task(lambda db: db.fetch_table("users", limit=10000))
+        except Exception as exc:
+            debug_print("GUI", f"Failed to load Supabase users for purge: {exc}")
+            self.after(0, lambda: (self._enable_purge_button(), messagebox.showerror("Purge Failed", "Could not load users from Supabase.")))
             return
-        finally:
-            if conn is not None:
-                conn.close()
+        rows = rows or []
 
         try:
             bot = get_reference("TwitchBot")
@@ -5690,26 +6122,47 @@ class DBEditor(tk.Tk):
         protected_ids.discard("")
 
         user_ids: list[str] = []
-        local_delete_ids: list[str] = []
+        local_delete_specs: list[tuple[str, str]] = []
         skipped_protected = 0
+        skipped_discord_only = 0
         for row in rows:
-            raw_id = str(row.get("id") or "").strip()
-            if not raw_id:
+            twitch_id = str(row.get("twitch_id") or "").strip()
+            primary_key = str(row.get("id") or "").strip()
+            discord_id = str(row.get("discord_id") or "").strip()
+
+            if not twitch_id and discord_id:
+                skipped_discord_only += 1
                 continue
-            if raw_id in protected_ids:
+
+            delete_spec: tuple[str, str] | None = None
+            if twitch_id:
+                delete_spec = ("twitch_id", twitch_id)
+            elif primary_key:
+                delete_spec = ("id", primary_key)
+            else:
+                continue
+
+            if twitch_id and twitch_id in protected_ids:
                 skipped_protected += 1
                 continue
-            if not raw_id.isdigit():
-                local_delete_ids.append(raw_id)
-                continue
-            user_ids.append(raw_id)
 
-        if local_delete_ids:
-            debug_print("GUI", f"Queued {len(local_delete_ids)} user records with non-Twitch IDs for removal without Twitch API checks.")
+            if not twitch_id or not twitch_id.isdigit():
+                local_delete_specs.append(delete_spec)
+                continue
+
+            user_ids.append(twitch_id)
+
+        if local_delete_specs:
+            debug_print(
+                "GUI",
+                f"Queued {len(local_delete_specs)} user records without valid Twitch IDs for removal without Twitch API checks.",
+            )
         if skipped_protected:
             debug_print("GUI", f"Protecting {skipped_protected} critical user records (bot/owner) from purge.")
+        if skipped_discord_only:
+            debug_print("GUI", f"Skipping {skipped_discord_only} Discord-only user records without Twitch IDs.")
 
-        if not user_ids and not local_delete_ids:
+        if not user_ids and not local_delete_specs:
             self.after(0, lambda: (self._enable_purge_button(), messagebox.showinfo("Purge Complete", "No purgeable users were found.")))
             return
 
@@ -5736,29 +6189,42 @@ class DBEditor(tk.Tk):
 
             purge_ids = [uid for uid, status in status_map.items() if status in ("banned", "missing")]
 
-        total_purge_ids = purge_ids + local_delete_ids
-        if not total_purge_ids:
+        delete_specs: list[tuple[str, str]] = []
+        seen_specs: set[tuple[str, str]] = set()
+        for spec in [("twitch_id", uid) for uid in purge_ids] + local_delete_specs:
+            column, value = spec
+            if not value:
+                continue
+            key = (column, str(value))
+            if key in seen_specs:
+                continue
+            seen_specs.add(key)
+            delete_specs.append((column, str(value)))
+
+        if not delete_specs:
             self.after(0, lambda: (self._enable_purge_button(), messagebox.showinfo("Purge Complete", "No banned, deleted, or invalid users found.")))
             return
 
         try:
-            conn = self.connect()
-            with conn:
-                conn.executemany("DELETE FROM users WHERE id = ?", [(uid,) for uid in total_purge_ids])
-        except Exception as e:
-            debug_print("GUI", f"Failed to delete users: {e}")
-            self.after(0, lambda: (self._enable_purge_button(), messagebox.showerror("Purge Failed", "Database delete failed.")))
+            def _delete_job(db: OnlineDatabase):
+                async def _delete_all():
+                    for column, value in delete_specs:
+                        await db.delete_data("users", column, value)
+
+                return _delete_all()
+
+            self._run_online_db_task(_delete_job)
+        except Exception as exc:
+            debug_print("GUI", f"Failed to delete Supabase users: {exc}")
+            self.after(0, lambda: (self._enable_purge_button(), messagebox.showerror("Purge Failed", "Supabase delete failed.")))
             return
-        finally:
-            if conn is not None:
-                conn.close()
 
         def _show_complete_message():
-            parts = [f"Removed {len(total_purge_ids)} users."]
+            parts = [f"Removed {len(delete_specs)} users."]
             if purge_ids:
                 parts.append(f"{len(purge_ids)} confirmed banned/deleted via Twitch.")
-            if local_delete_ids:
-                parts.append(f"{len(local_delete_ids)} invalid IDs removed locally.")
+            if local_delete_specs:
+                parts.append(f"{len(local_delete_specs)} invalid or orphaned records removed directly.")
             messagebox.showinfo("Purge Complete", "\n".join(parts))
 
         self.after(0, lambda: (self._enable_purge_button(), self.refresh_users_tab(), _show_complete_message()))
