@@ -101,7 +101,7 @@ class AudioManager:
                 mp3_file = MP3(path)
                 return mp3_file.info.length
         except Exception as exc:
-            debug_print("AudioManager", f"Failed to determine duration for {path}: {exc}")
+            print(f"Failed to determine duration for {path}: {exc}")
         return None
 
     def _wait_for_playback(self, duration: float | None) -> None:
@@ -188,11 +188,11 @@ class AudioManager:
                     # Play but don't block for the duration
                     self.play_audio(tmpname, sleep_during_playback=False, delete_file=True, play_using_music=False, volume=0)
                 except Exception as e:
-                    debug_print("AudioManager", f"Warmup playback error: {e}")
+                    print(f"Warmup playback error: {e}")
             finally:
                 self._delete_file_with_retry(tmpname)
         except Exception as e:
-            debug_print("AudioManager", f"Warmup failed: {e}")
+            print(f"Warmup failed: {e}")
 
     def stop_playback(self):
         debug_print("AudioManager", "Stopping playback.")
@@ -239,7 +239,7 @@ class AudioManager:
             try:
                 _load_and_play(active_path)
             except Exception as e:
-                debug_print("AudioManager", f"Initial load failed, attempting conversion: {e}")
+                print(f"Initial load failed, attempting conversion: {e}")
                 try:
                     audio = AudioSegment.from_file(active_path)
                     audio = audio.set_frame_rate(48000).set_channels(2).set_sample_width(2)
@@ -250,7 +250,7 @@ class AudioManager:
                     active_path = converted_tmp
                     _load_and_play(active_path)
                 except Exception as e2:
-                    debug_print("AudioManager", f"Conversion/playback failed: {e2}")
+                    print(f"Conversion/playback failed: {e2}")
                     raise
 
             playback_duration = self._compute_audio_duration(active_path)
@@ -339,11 +339,11 @@ class AudioManager:
                         _ = pygame.mixer.Sound(converted_tmp)
                     return converted_tmp, True
                 except Exception as e:
-                    debug_print("AudioManager", f"prepare_playback conversion failed: {e}")
+                    print(f"prepare_playback conversion failed: {e}")
                     # Give up — return original and let play_audio attempt conversion/on-the-fly
                     return file_path, False
         except Exception as e:
-            debug_print("AudioManager", f"prepare_playback unexpected error: {e}")
+            print(f"prepare_playback unexpected error: {e}")
             return file_path, False
 
     async def play_audio_async(self, file_path, volume: int = 100):
@@ -391,7 +391,7 @@ class AudioManager:
                 fmt = None
             debug_print("AudioManager", f"Detected audio format from header: {fmt}")
         except Exception as e:
-            debug_print("AudioManager", f"Failed to read header for format detection: {e}")
+            print(f"Failed to read header for format detection: {e}")
             fmt = None
 
         # Attempt primary load using pydub (ffmpeg). If that fails, fallback to soundfile
@@ -412,7 +412,7 @@ class AudioManager:
             debug_print("AudioManager", f"Processed audio frames: {len(frames)}, sample duration(ms): {len(audio)}")
             return volumes, len(audio)
         except Exception as e:
-            debug_print("AudioManager", f"Error processing audio with pydub/ffmpeg: {e}")
+            print(f"Error processing audio with pydub/ffmpeg: {e}")
             debug_print("AudioManager", "Falling back to soundfile-based processing (no ffmpeg required)")
             try:
                 # Use soundfile to read waveform data in blocks and compute RMS per block
@@ -448,7 +448,7 @@ class AudioManager:
                         volumes = [0]
                     return volumes, duration_ms
             except Exception as e2:
-                debug_print("AudioManager", f"Fallback processing also failed: {e2}")
+                print(f"Fallback processing also failed: {e2}")
                 return [], 0
 
     async def map_volume_to_y(self, vol, min_vol, max_vol, base_y = 800, max_bounce = 25):
@@ -471,12 +471,20 @@ class AudioManager:
             debug_print("AudioManager", f"Sound effects directory does not exist: {sound_fx_dir}")
             self.list_of_sound_fx = sound_fx_list
             return
+        allowed_exts = ('.mp3', '.wav', '.ogg', '.flac')
+        seen_names = set()
         for filename in os.listdir(sound_fx_dir):
-            if filename.lower().endswith(('.mp3', '.wav', '.ogg', '.flac')):
-                if filename == "test_sound.mp3":
-                    continue  # Skip test sound
-                filename = filename.strip(".mp3").strip(".wav").strip(".ogg").strip(".flac")
-                sound_fx_list.append(filename)
+            lower_name = filename.lower()
+            if not lower_name.endswith(allowed_exts):
+                continue
+            if lower_name == "test_sound.mp3":
+                continue  # Skip test sound
+            base_name = Path(filename).stem
+            key = base_name.lower()
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+            sound_fx_list.append(base_name)
         self.list_of_sound_fx = sound_fx_list
         debug_print("AudioManager", f"Populated sound effects list with {len(self.list_of_sound_fx)} items.")
 
@@ -574,7 +582,7 @@ class AudioManager:
                     "source_path": file_path,
                 }
             except Exception as primary_err:
-                debug_print("AudioManager", f"Direct load failed for '{file_path}': {primary_err}")
+                print(f"Direct load failed for '{file_path}': {primary_err}")
                 audio = AudioSegment.from_file(file_path)
                 audio = audio.set_frame_rate(48000).set_channels(2).set_sample_width(2)
                 tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -591,7 +599,7 @@ class AudioManager:
                     "source_path": file_path,
                 }
         except Exception as e:
-            debug_print("AudioManager", f"_prepare_sound_asset error for '{file_path}': {e}")
+            print(f"_prepare_sound_asset error for '{file_path}': {e}")
         finally:
             if converted_tmp:
                 self._delete_file_with_retry(converted_tmp)
