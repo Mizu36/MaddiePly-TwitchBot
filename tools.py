@@ -19,6 +19,9 @@ AUDIO_MANAGER = None
 OBS_MANAGER = None
 GPT_MANAGER = None
 POINT_BUILDER = None
+ONLINE_DATABASE = None
+ONLINE_STORAGE = None
+GACHA_HANDLER = None
 
 def get_debug() -> bool:
     """Fetches the DEBUG setting from the database."""
@@ -50,13 +53,11 @@ def get_random_from_list(items: list):
         return None
     return random.choice(items)
 
-
 def get_app_root() -> Path:
     """Return the folder that holds runtime data (repo root when unfrozen, exe folder when bundled)."""
     if getattr(sys, "frozen", False):  # Running under PyInstaller/Freeze
         return Path(sys.executable).resolve().parent
     return _PROJECT_ROOT
-
 
 def path_from_app_root(*parts: str) -> Path:
     """Join paths relative to the runtime root."""
@@ -64,78 +65,95 @@ def path_from_app_root(*parts: str) -> Path:
 
 def set_reference(name: str, reference) -> None:
     """Sets a global reference by name"""
+    success = "successfully."
     if name == "TwitchBot":
         global TWITCH_BOT
         TWITCH_BOT = reference
         if not TWITCH_BOT:
-            debug_print("Tools", "TwitchBot reference set to None.")
+            success = "to None."
     elif name == "ResponseTimer":
         global TIMER
         TIMER = reference
         if not TIMER:
-            debug_print("Tools", "ResponseTimer reference set to None.")
+            success = "to None."
     elif name == "DiscordBot":
         global DISCORD_BOT
         DISCORD_BOT = reference
         if not DISCORD_BOT:
-            debug_print("Tools", "DiscordBot reference set to None.")
+            success = "to None."
     elif name == "ElevenLabsManager":
         global ELEVENLABS_MANAGER
         ELEVENLABS_MANAGER = reference
         if not ELEVENLABS_MANAGER:
-            debug_print("Tools", "ElevenLabsManager reference set to None.")
+            success = "to None."
     elif name == "SpeechToTextManager":
         global SPEECH_TO_TEXT_MANAGER
         SPEECH_TO_TEXT_MANAGER = reference
         if not SPEECH_TO_TEXT_MANAGER:
-            debug_print("Tools", "SpeechToTextManager reference set to None.")
+            success = "to None."
     elif name == "AssistantManager":
         global ASSISTANT_MANAGER
         ASSISTANT_MANAGER = reference
         if not ASSISTANT_MANAGER:
-            debug_print("Tools", "AssistantManager reference set to None.")
+            success = "to None."
     elif name == "EventManager":
         global EVENT_MANAGER
         EVENT_MANAGER = reference
         if not EVENT_MANAGER:
-            debug_print("Tools", "EventManager reference set to None.")
+            success = "to None."
     elif name == "AutoMod":
         global AUTOMOD
         AUTOMOD = reference
         if not AUTOMOD:
-            debug_print("Tools", "AutoMod reference set to None.")
+            success = "to None."
     elif name == "AudioManager":
         global AUDIO_MANAGER
         AUDIO_MANAGER = reference
         if not AUDIO_MANAGER:
-            debug_print("Tools", "AudioManager reference set to None.")
+            success = "to None."
     elif name == "OBSManager":
         global OBS_MANAGER
         OBS_MANAGER = reference
         if not OBS_MANAGER:
-            debug_print("Tools", "OBSManager reference set to None.")
+            success = "to None."
     elif name == "GPTManager":
         global GPT_MANAGER
         GPT_MANAGER = reference
         if not GPT_MANAGER:
-            debug_print("Tools", "GPTManager reference set to None.")
+            success = "to None."
     elif name == "PointBuilder":
         global POINT_BUILDER
         POINT_BUILDER = reference
         if not POINT_BUILDER:
-            debug_print("Tools", "PointBuilder reference set to None.")
+            success = "to None."
     elif name == "MessageScheduler":
         global SCHEDULER
         SCHEDULER = reference
         if not SCHEDULER:
-            debug_print("Tools", "MessageScheduler reference set to None.")
+            success = "to None."
     elif name == "CommandHandler":
         global COMMAND_HANDLER
         COMMAND_HANDLER = reference
         if not COMMAND_HANDLER:
-            debug_print("Tools", "CommandHandler reference set to None.")
+            success = "to None."
+    elif name == "OnlineDatabase":
+        global ONLINE_DATABASE
+        ONLINE_DATABASE = reference
+        if not ONLINE_DATABASE:
+            success = "to None."
+    elif name == "OnlineStorage":
+        global ONLINE_STORAGE
+        ONLINE_STORAGE = reference
+        if not ONLINE_STORAGE:
+            success = "to None."
+    elif name == "GachaHandler":
+        global GACHA_HANDLER
+        GACHA_HANDLER = reference
+        if not GACHA_HANDLER:
+            success = "to None."
+    debug_print("Tools", f"{name} reference set {success}")
 
-def get_reference(name: Literal["TwitchBot", "ResponseTimer", "DiscordBot", "ElevenLabsManager", "SpeechToTextManager", "AssistantManager", "EventManager", "AutoMod", "AudioManager", "OBSManager", "GPTManager", "PointBuilder", "MessageScheduler", "CommandHandler"]):
+def get_reference(name: Literal["TwitchBot", "ResponseTimer", "DiscordBot", "ElevenLabsManager", "SpeechToTextManager", "AssistantManager", "EventManager", "AutoMod", "AudioManager", "OBSManager", "GPTManager", "PointBuilder", "MessageScheduler", "CommandHandler", "OnlineDatabase", "OnlineStorage", "GachaHandler"]):
     """Gets a global reference by name"""
     if name == "TwitchBot":
         if not TWITCH_BOT:
@@ -193,3 +211,15 @@ def get_reference(name: Literal["TwitchBot", "ResponseTimer", "DiscordBot", "Ele
         if not COMMAND_HANDLER:
             debug_print("Tools", "CommandHandler reference requested but not set.")
         return COMMAND_HANDLER
+    elif name == "OnlineDatabase":
+        if not ONLINE_DATABASE:
+            debug_print("Tools", "OnlineDatabase reference requested but not set.")
+        return ONLINE_DATABASE
+    elif name == "OnlineStorage":
+        if not ONLINE_STORAGE:
+            debug_print("Tools", "OnlineStorage reference requested but not set.")
+        return ONLINE_STORAGE
+    elif name == "GachaHandler":
+        if not GACHA_HANDLER:
+            debug_print("Tools", "GachaHandler reference requested but not set.")
+        return GACHA_HANDLER
