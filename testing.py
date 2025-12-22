@@ -12,7 +12,7 @@ No code runs automatically on import; GUI buttons (or manual REPL calls) should
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from random import randint
+from random import randint, choice
 from types import SimpleNamespace
 from typing import Any, Callable, TYPE_CHECKING
 
@@ -30,23 +30,22 @@ def _ns(**kwargs: Any) -> SimpleNamespace:
     return SimpleNamespace(**kwargs)
 
 
-_TRACKING_USER_IDS = ["user_tracking_1", "user_tracking_2", "user_tracking_3"]
-_TRACKING_INDEX = 0
+_TEST_VIEWER_USERNAME = "testviewer"
+_TEST_VIEWER_DISPLAY = "TestViewer"
+_TEST_VIEWER_ID = "test_viewer_id"
 
-
-def _next_tracking_user_id() -> str:
-    global _TRACKING_INDEX
-    uid = _TRACKING_USER_IDS[_TRACKING_INDEX]
-    _TRACKING_INDEX = (_TRACKING_INDEX + 1) % len(_TRACKING_USER_IDS)
-    return uid
+_TEST_BROADCASTER_USERNAME = "testbroadcaster"
+_TEST_BROADCASTER_DISPLAY = "TestBroadcaster"
+_TEST_BROADCASTER_ID = "test_broadcaster_id"
 
 
 def _fake_user(
     *, display_name: str = "TestUser", user_id: str | None = None, login: str | None = None
 ) -> SimpleNamespace:
-    username = login or display_name.lower()
-    assigned_id = user_id or _next_tracking_user_id()
-    return _ns(id=assigned_id, name=username, display_name=display_name)
+    username = _TEST_VIEWER_USERNAME
+    assigned_id = _TEST_VIEWER_ID
+    display = _TEST_VIEWER_DISPLAY
+    return _ns(id=assigned_id, name=username, login=username, display_name=display)
 
 
 class FakePartialUser(SimpleNamespace):
@@ -55,14 +54,15 @@ class FakePartialUser(SimpleNamespace):
     def __init__(
         self,
         *,
-        display_name: str = "TestStreamer",
+        display_name: str = _TEST_BROADCASTER_DISPLAY,
         user_id: str | None = None,
         login: str | None = None,
         channel_title: str = "Testing Stream",
         game_name: str = "Just Chatting",
     ) -> None:
-        username = login or display_name.lower()
-        assigned_id = user_id or _next_tracking_user_id()
+        username = _TEST_BROADCASTER_USERNAME
+        assigned_id = _TEST_BROADCASTER_ID
+        display_name = _TEST_BROADCASTER_DISPLAY
         super().__init__(id=assigned_id, name=username, display_name=display_name)
         self.login = username
         self._channel_info = _ns(
@@ -75,17 +75,14 @@ class FakePartialUser(SimpleNamespace):
         return self._channel_info
 
 def _fake_broadcaster(
-    display_name: str = "ModdiPly",
+    display_name: str = _TEST_BROADCASTER_DISPLAY,
     *,
     user_id: str | None = None,
-    login: str = "moddiply",
+    login: str = _TEST_BROADCASTER_USERNAME,
     channel_title: str = "Really cool test stream!",
     game_name: str = "Just Chatting",
 ) -> FakePartialUser:
     return FakePartialUser(
-        display_name=display_name,
-        user_id=user_id,
-        login=login,
         channel_title=channel_title,
         game_name=game_name,
     )
@@ -443,6 +440,33 @@ async def test_channel_points_redeem(**overrides: Any) -> SimpleNamespace:
 async def test_channel_points_auto_redeem(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
         "event_automatic_redemption_add", PayloadFactory.channel_points_auto_redeem, **overrides
+    )
+
+
+async def test_gacha_pull_redemption() -> SimpleNamespace:
+    """Simulate the 2,500-point custom channel point reward used for gacha rolls."""
+    reward = _fake_custom_reward(
+        title="Gacha Pull",
+        cost=2500,
+        prompt=None,
+        is_user_input_required=False,
+    )
+    return await _invoke_listener(
+        "event_custom_redemption_add",
+        PayloadFactory.channel_points_redemption,
+        reward=reward,
+        user_input="",
+    )
+
+
+async def test_gacha_bits_cheer() -> SimpleNamespace:
+    """Simulate a bits cheer that should award gacha pulls (randomly 500-3000 bits)."""
+    bit_amount = choice([500, 1000, 1500, 2000, 2500, 3000])
+    return await _invoke_listener(
+        "event_cheer",
+        PayloadFactory.channel_cheer,
+        bits=bit_amount,
+        message=_fake_message(f"Gacha bits test: {bit_amount} bits!"),
     )
 
 
