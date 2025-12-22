@@ -5,7 +5,8 @@ import logging
 import random
 from dotenv import load_dotenv
 from custom_channel_point_builder import CustomPointRedemptionBuilder
-from db import setup_database, get_all_commands, get_prompt, get_setting, set_user_data, get_user_data, get_specific_user_data, increment_user_stat, user_exists
+from db import setup_database, get_all_commands, get_setting
+from online_db import OnlineDatabase
 from google_api import add_quote, get_quote, get_random_quote, get_random_quote_containing_words
 import asqlite
 from twitchio import eventsub, HTTPException
@@ -103,7 +104,7 @@ class Bot(commands.AutoBot):
                 if resp.errors:
                     debug_print("AutoBot", f"Failed to subscribe bot user to whispers: {resp.errors}")
             except Exception as exc:
-                debug_print("AutoBot", f"Error subscribing bot user to whispers: {exc}")
+                print(f"Error subscribing bot user to whispers: {exc}")
             return
         
         subs: list[eventsub.SubscriptionPayload] = [
@@ -251,11 +252,11 @@ class Bot(commands.AutoBot):
         try:
             mods = await broadcaster.fetch_moderators(user_ids=[user.id], token_for=self.bot_id, first=1)
         except HTTPException as exc:
-            debug_print("AutoBot", f"Failed to verify moderator status for {username}: {exc}")
+            print(f"Failed to verify moderator status for {username}: {exc}")
             await self.send_chat(f"Cannot timeout {username}; unable to verify moderator status right now.")
             return
         except Exception as exc:
-            debug_print("AutoBot", f"Unexpected error verifying moderator status for {username}: {exc}")
+            print(f"Unexpected error verifying moderator status for {username}: {exc}")
             await self.send_chat(f"Cannot timeout {username}; unable to verify moderator status right now.")
             return
         if mods is None:
@@ -269,7 +270,7 @@ class Bot(commands.AutoBot):
         try:
             await broadcaster.timeout_user(moderator=self.bot_id, user=user, duration=duration, reason=reason)
         except Exception as e:
-            debug_print("AutoBot", f"Failed to timeout user {username}: {e}")
+            print(f"Failed to timeout user {username}: {e}")
     
     async def get_total_bits_donated(self, user_id) -> int:
         debug_print("AutoBot", f"Fetching total bits donated by user ID: {user_id}")
@@ -277,10 +278,7 @@ class Bot(commands.AutoBot):
         try:
             leaderboard = await broadcaster.fetch_bits_leaderboard(user=user_id, count=1)
         except HTTPException as exc:
-            debug_print(
-                "AutoBot",
-                f"Failed to fetch bits leaderboard for {user_id}: {exc}. Does the owner token include bits:read?",
-            )
+            print(f"Failed to fetch bits leaderboard for {user_id}: {exc}. Does the owner token include bits:read?")
             return 0
         leader = next((l for l in leaderboard.leaders if str(l.user_id) == str(user_id)), None)
         return leader.score if leader else 0
@@ -318,7 +316,7 @@ class Bot(commands.AutoBot):
                     existing[str(user.id)] = user
             except Exception as e:
                 user_lookup_failed = True
-                debug_print("AutoBot", f"Failed to fetch users for purge chunk: {e}")
+                print(f"Failed to fetch users for purge chunk: {e}")
             banned_ids: set[str] = set()
             broadcaster = self.create_partialuser(user_id=self.owner_id)
             banned_lookup_failed = False
@@ -335,15 +333,14 @@ class Bot(commands.AutoBot):
             except HTTPException as exc:
                 banned_lookup_failed = True
                 if getattr(exc, "status", None) == 401:
-                    debug_print(
-                        "AutoBot",
+                    print(
                         "fetch_banned_user requires moderation:read or moderator:manage:banned_users. Skipping banned classification.",
                     )
                 else:
-                    debug_print("AutoBot", f"fetch_banned_users failed during purge classification: {exc}")
+                    print(f"fetch_banned_users failed during purge classification: {exc}")
             except Exception as e:
                 banned_lookup_failed = True
-                debug_print("AutoBot", f"fetch_banned_users failed during purge classification: {e}")
+                print(f"fetch_banned_users failed during purge classification: {e}")
             for uid in chunk:
                 if not banned_lookup_failed and uid in banned_ids:
                     results[uid] = "banned"
@@ -363,6 +360,8 @@ class CommandHandler(commands.Component):
         self.auto_mod: AutoMod = get_reference("AutoMod")
         self.assistant: AssistantManager = get_reference("AssistantManager")
         self.event_manager: EventManager = get_reference("EventManager")
+        self.online_database: OnlineDatabase = None
+        self.gacha_handler = None
         self.audio_manager = None
         self.shared_chat = False
         self.shared_chat_welcome = False
@@ -375,7 +374,7 @@ class CommandHandler(commands.Component):
         self.message_queue = []
         self.message_timer = None
         self.first_user_greeted = False
-        self.ignored_users = ["streamlabs", "streamelements", "nightbot", "moobot", "tangiabot", "maddieply", "soundalerts"]
+        self.ignored_users = ["streamlabs", "streamelements", "nightbot", "moobot", "tangiabot", "maddieply", "soundalerts", "moddiply"]
         self.welcomed_users = []
         self.users_to_greet = []
         self.message_history = []
@@ -389,13 +388,32 @@ class CommandHandler(commands.Component):
         self.discord_bot.start_bot_background()
         self.custom_builder = None
         asyncio.create_task(self.start_custom_builder())
+        asyncio.create_task(self.start_online_database())
         asyncio.create_task(self.set_shared_chat_settings())
         asyncio.create_task(self.event_manager.start())
+        asyncio.create_task(self.start_gacha_system())
         debug_print("CommandHandler", "CommandHandler initialized.")
 
     async def start_custom_builder(self) -> None:
         self.custom_builder = CustomPointRedemptionBuilder()
         set_reference("PointBuilder", self.custom_builder)
+
+    async def start_online_database(self) -> None:
+        from online_db import OnlineDatabase, OnlineStorage
+        OnlineStorage()
+        self.online_database = OnlineDatabase()
+        debug_print("CommandHandler", "OnlineDatabase initialized.")
+
+    async def start_gacha_system(self) -> None:
+        from gacha import Gacha
+        if await get_setting("Gacha System Enabled", default=False) and not self.gacha_handler:
+            self.gacha_handler = Gacha()
+            asyncio.create_task(self.gacha_handler.startup())
+
+    async def end_gacha_system(self) -> None:
+        if self.gacha_handler:
+            self.gacha_handler = None
+        set_reference("GachaHandler", None)
 
     def get_message_history(self):
         debug_print("CommandHandler", f"Sending message history from Twitch bot.")
@@ -578,100 +596,111 @@ class CommandHandler(commands.Component):
     
     async def handle_message(self) -> None:
         while True:
-            if len(self.message_queue) > 0:
-                debug_print("CommandHandler", f"Processing message queue; {len(self.message_queue)} messages pending.")
-                payload: twitchio.ChatMessage = self.message_queue.pop(0)
-                if self.shared_chat:
-                    debug_print("CommandHandler", "Processing message in shared chat mode.")
-            else:
-                if self.shared_chat:
-                    if not self.shared_chat_response and not self.shared_chat_welcome:
-                        await asyncio.sleep(60)
-                        continue
-                    else:
-                        await asyncio.sleep(1)
-                await asyncio.sleep(.5)
-                continue
-            user_name = payload.chatter.name
-            if user_name.lower() in self.ignored_users:
-                continue
-            if payload.text.startswith(self.prefix):
-                continue
-            increment = None
-            if not self.shared_chat or self.shared_chat_message_scheduler:
-                increment = asyncio.create_task(self.scheduler.increment_message_count())
-            if not self.shared_chat or self.shared_chat_welcome:
-                if user_name not in self.welcomed_users and user_name not in self.users_to_greet:
-                    if not self.first_user_greeted:
-                        self.first_user_greeted = True
-                        user_id = payload.chatter.id
-                        chime_enabled = await get_setting("First Chat of Stream Chime Enabled", True)
-                        if chime_enabled:
-                            try:
-                                soundFX = await get_specific_user_data(user_id=user_id, field="sound_fx")
-                                if soundFX == "off":
-                                    debug_print("CommandHandler", f"Sound FX is turned off for user {user_name}.")
-                                elif soundFX == "on":
-                                    if not self.audio_manager:
-                                        self.audio_manager = get_reference("AudioManager")
-                                    asyncio.create_task(self.audio_manager.play_random_sound_fx())
-                                elif soundFX not in [None, "", "None", "null", "none", "NULL"]:
-                                    if not self.audio_manager:
-                                        self.audio_manager = get_reference("AudioManager")
-                                    asyncio.create_task(self.audio_manager.play_sound_fx_by_name(soundFX))
-                                else:
-                                    if not self.audio_manager:
-                                        self.audio_manager = get_reference("AudioManager")
-                                    asyncio.create_task(self.audio_manager.play_random_sound_fx())
-                            except Exception as e:
-                                debug_print("CommandHandler", f"Error fetching sound FX for user {user_name}: {e}")
-                        self.welcomed_users.append(user_name)
-                        prompt = await get_prompt("Personality Prompt")
-                        prompt += f"\nYour first task is to welcome {payload.chatter.display_name} as the first person to show up to work today at ModdCorp. Make it short and sweet, but still in character as MaddiePly. Respond in only 1 sentence."
-                        if not self.assistant:
-                            self.assistant = get_reference("AssistantManager")
-                        response = await self.assistant.general_response(prompt)
-                        await self.bot.send_chat(response)
-                    else:
-                        self.users_to_greet.append(user_name)
-                        if self.greeting_task is None or self.greeting_task.done():
-                            self.greeting_task = asyncio.create_task(self.greet_newcomers())
-            else:
-                debug_print("CommandHandler", f"Skipping welcome for {user_name} due to shared chat settings.")
-            user_id = payload.chatter.id
-            if not await user_exists(user_id=user_id):
-                date = payload.timestamp.date().strftime("%Y-%m-%d")
-                await set_user_data(user_id=user_id, username=payload.chatter.name, display_name=payload.chatter.display_name, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0, date_added=date)
-            user_data = await get_user_data(user_id=user_id)
-            if not user_data.get("username"):
-                #Properly creates user if they were added through whisper commands.
-                await set_user_data(user_id=user_id, username=payload.chatter.name, display_name=payload.chatter.display_name, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0)
-            elif user_data.get("display_name") != payload.chatter.display_name or user_data.get("username") != payload.chatter.name:
-                #Updated display name or username if they've changed.
-                await set_user_data(user_id=user_id, username=payload.chatter.name, display_name=payload.chatter.display_name)
-            await increment_user_stat(user_id=user_id, stat="messages")
-            if self.shared_chat and not self.shared_chat_response:
-                debug_print("CommandHandler", f"Skipping message processing for {user_name} due to shared chat settings.")
+            try:
+                if len(self.message_queue) > 0:
+                    debug_print("CommandHandler", f"Processing message queue; {len(self.message_queue)} messages pending.")
+                    payload: twitchio.ChatMessage = self.message_queue.pop(0)
+                    if self.shared_chat:
+                        debug_print("CommandHandler", "Processing message in shared chat mode.")
+                else:
+                    if self.shared_chat:
+                        if not self.shared_chat_response and not self.shared_chat_welcome:
+                            await asyncio.sleep(60)
+                            continue
+                        else:
+                            await asyncio.sleep(1)
+                    await asyncio.sleep(.5)
+                    continue
+                user_name = payload.chatter.name
+                if user_name.lower() in self.ignored_users:
+                    continue
+                if payload.text.startswith(self.prefix):
+                    continue
+                if not self.online_database:
+                    self.online_database = get_reference("OnlineDatabase")
+                user_id = payload.chatter.id
+                if not await self.online_database.user_exists(twitch_user_id=user_id):
+                    user_data = {"twitch_username": payload.chatter.name, "twitch_display_name": payload.chatter.display_name, "active_gacha_set": "humble beginnings"}
+                    await self.online_database.create_user(user_id, user_data)
+                await self.online_database.increment_column(table="users", column_filter="twitch_id", value=user_id, column_to_increment="twitch_number_of_messages", increment_by=1)
+                increment = None
+                if not self.shared_chat or self.shared_chat_message_scheduler:
+                    increment = asyncio.create_task(self.scheduler.increment_message_count())
+                if not self.shared_chat or self.shared_chat_welcome:
+                    if user_name not in self.welcomed_users and user_name not in self.users_to_greet:
+                        if not self.first_user_greeted:
+                            self.first_user_greeted = True
+                            chime_enabled = await get_setting("First Chat of Stream Chime Enabled", True)
+                            if chime_enabled:
+                                try:
+                                    soundFX = await self.online_database.get_specific_user_data(twitch_user_id=user_id, field="chime")
+                                    if soundFX == "off":
+                                        debug_print("CommandHandler", f"Sound FX is turned off for user {user_name}.")
+                                    elif soundFX == "on":
+                                        if not self.audio_manager:
+                                            self.audio_manager = get_reference("AudioManager")
+                                        asyncio.create_task(self.audio_manager.play_random_sound_fx())
+                                    elif soundFX not in [None, "", "None", "null", "none", "NULL"]:
+                                        if not self.audio_manager:
+                                            self.audio_manager = get_reference("AudioManager")
+                                        asyncio.create_task(self.audio_manager.play_sound_fx_by_name(soundFX))
+                                    else:
+                                        if not self.audio_manager:
+                                            self.audio_manager = get_reference("AudioManager")
+                                        asyncio.create_task(self.audio_manager.play_random_sound_fx())
+                                except Exception as e:
+                                    print(f"Error fetching sound FX for user {user_name}: {e}")
+                            self.welcomed_users.append(user_name)
+                            prompt = f"{payload.chatter.display_name} is the first person to show up to work today at ModdCorp."
+                            if not self.assistant:
+                                self.assistant = get_reference("AssistantManager")
+                            response = await self.assistant.general_response(prompt)
+                            await self.bot.send_chat(response)
+                        else:
+                            self.users_to_greet.append(user_name)
+                            if self.greeting_task is None or self.greeting_task.done():
+                                self.greeting_task = asyncio.create_task(self.greet_newcomers())
+                else:
+                    debug_print("CommandHandler", f"Skipping welcome for {user_name} due to shared chat settings.")
+                user_id = payload.chatter.id
+                user_data: dict = await self.online_database.get_user_data(twitch_user_id=user_id)
+                data_to_update = {}
+                if not user_data.get("twitch_username") or user_data.get("twitch_username") != payload.chatter.name:
+                    data_to_update["twitch_username"] = payload.chatter.name
+                elif user_data.get("twitch_display_name") != payload.chatter.display_name:
+                    data_to_update["twitch_display_name"] = payload.chatter.display_name
+                if data_to_update:
+                    await self.online_database.create_user(user_id, data_to_update)
+                if self.shared_chat and not self.shared_chat_response:
+                    debug_print("CommandHandler", f"Skipping message processing for {user_name} due to shared chat settings.")
+                    if increment:
+                        await increment
+                    continue
+                message = payload.text
+                time = payload.timestamp.time().strftime("%Y-%m-%d %H:%M:%S")
+                self.message_history.append({"user": user_name, "message": message, "time": payload.timestamp.time()})
+                if len(self.message_history) > 50:
+                    self.message_history.pop(0)
                 if increment:
                     await increment
-                continue
-            message = payload.text
-            time = payload.timestamp.time().strftime("%Y-%m-%d %H:%M:%S")
-            self.message_history.append({"user": user_name, "message": message, "time": payload.timestamp.time()})
-            if len(self.message_history) > 50:
-                self.message_history.pop(0)
-            if increment:
-                await increment
-            await self.response_manager.handle_message(user_name, message, time)
+                await self.response_manager.handle_message(user_name, message, time)
+            except asyncio.CancelledError:
+                print("Message handler task cancelled.")
+                raise
+            except Exception as exc:
+                print(f"Error while processing chat messages: {exc}")
+                await asyncio.sleep(1)
 
     async def handle_whisper(self, payload: twitchio.Whisper) -> None:
         debug_print("CommandHandler", "Handling received whisper...")
         if not payload.text:
             return
         user_id = payload.sender.id
-        if not await user_exists(user_id=user_id):
-            date = payload.timestamp.date().strftime("%Y-%m-%d")
-            await set_user_data(user_id=user_id, username=payload.sender.name, display_name=payload.sender.display_name, number_of_messages=0, bits_donated=0, months_subscribed=0, subscriptions_gifted=0, points_redeemed=0, date_added=date)
+        if not self.online_database:
+            self.online_database = get_reference("OnlineDatabase")
+        if not await self.online_database.user_exists(twitch_user_id=user_id):
+            data = {"twitch_username": payload.sender.name, "twitch_display_name": payload.sender.display_name, "active_gacha_set": "humble beginnings"}
+            await self.online_database.create_user(user_id, data)
         message_parts = payload.text.strip().split()
         if not message_parts[0].lower().startswith("!"):
             if not message_parts[0].lower() in ["hi", "hello", "hey", "greetings", "sup", "yo", "howdy"]:
@@ -710,21 +739,30 @@ class CommandHandler(commands.Component):
                 return
             if not self.discord_bot:
                 self.discord_bot: DiscordBot = get_reference("DiscordBot")
-            random_eight_digit_code = str(random.randint(10000000, 99999999))
-            #replace up to 4 numbers with characters either lower or upper case
-            code_list = list(random_eight_digit_code)
-            indices = random.sample(range(8), 4)
-            for index in indices:
-                if random.choice([True, False]):
-                    code_list[index] = chr(random.randint(65, 90)) #Uppercase A-Z
-                else:
-                    code_list[index] = chr(random.randint(97, 122)) #Lowercase a-z
-            random_eight_digit_code = "".join(code_list)
-            await set_user_data(user_id=payload.sender.id, discord_id=discord_user_id, discord_username="Unlinked", discord_secret_code=random_eight_digit_code)
+            random_eight_digit_code = await self.online_database.get_specific_user_data(twitch_user_id=payload.sender.id, field="connection_password")
+            if not random_eight_digit_code:
+                while True:
+                    random_eight_digit_code = str(random.randint(10000000, 99999999))
+                    #replace up to 4 numbers with characters either lower or upper case
+                    code_list = list(random_eight_digit_code)
+                    indices = random.sample(range(8), 4)
+                    for index in indices:
+                        if random.choice([True, False]):
+                            code_list[index] = chr(random.randint(65, 90)) #Uppercase A-Z
+                        else:
+                            code_list[index] = chr(random.randint(97, 122)) #Lowercase a-z
+                    random_eight_digit_code = "".join(code_list)
+                    data = {"discord_id": discord_user_id, "connection_password": random_eight_digit_code}
+                    try:
+                        await self.online_database.create_user(payload.sender.id, data)
+                    except Exception as e:
+                        print(f"Error updating connection password in online database: {e}")
+                        continue
+                    break
             try:
-                await self.discord_bot.send_direct_message(discord_user_id, f"Hello {payload.sender}, please dm me on twitch the following command !confirmdiscord {random_eight_digit_code} to link your Discord account to your Twitch account.")
+                await self.discord_bot.send_direct_message(discord_user_id, f"Hello {payload.sender}, please dm me on twitch the following command '!confirmdiscord {random_eight_digit_code}' to link your Discord account to your Twitch account.")
             except Exception as e:
-                debug_print("CommandHandler", f"Error sending Discord DM: {e}")
+                print(f"Error sending Discord DM: {e}")
                 await self.bot.whisper(payload.sender, "I was unable to send you a DM on Discord. Please ensure that your DMs are enabled, you are in the community Discord server, and you have not blocked me, then try again.")
             return
         elif message_parts[0].lower() == "!confirmdiscord":
@@ -733,26 +771,31 @@ class CommandHandler(commands.Component):
                 await self.bot.whisper(payload.sender, "Please provide the confirmation code you received on Discord. Usage: !confirmdiscord <Confirmation Code>")
                 return
             confirmation_code = message_parts[1]
-            user_data = await get_user_data(user_id=payload.sender.id)
-            if user_data.get("discord_secret_code") != confirmation_code:
+            user_data = await self.online_database.get_user_data(twitch_user_id=payload.sender.id)
+            if user_data.get("connection_password") != confirmation_code:
                 debug_print("CommandHandler", "Invalid confirmation code provided in whisper.")
                 await self.bot.whisper(payload.sender, "The confirmation code you provided is invalid. Please check the code and try again.")
                 return
             if not self.discord_bot:
                 self.discord_bot: DiscordBot = get_reference("DiscordBot")
             discord_user_name = await self.discord_bot.get_discord_user_name(user_data.get("discord_id"))
-            await set_user_data(user_id=payload.sender.id, discord_username=discord_user_name, discord_secret_code="null")
+            data = {"discord_username": discord_user_name}
+            await self.online_database.combine_rows(payload.sender.id, user_data.get("discord_id"))
+            await self.online_database.create_user(payload.sender.id, data)
             await asyncio.gather(self.bot.whisper(payload.sender, "Your Twitch account has been successfully linked to your Discord account! Thank you."), self.discord_bot.send_direct_message(user_data.get("discord_id"), f"Hello {discord_user_name}, your Discord account has been successfully linked to your Twitch account {payload.sender.display_name}! Thank you."))
             return
         elif message_parts[0].lower() == "!disconnectdiscord":
-            user_data = await get_specific_user_data(user_id=payload.sender.id, field="discord_username")
-            if user_data in [None, "Unlinked"]:
+            if not self.online_database:
+                self.online_database = get_reference("OnlineDatabase")
+            user_data = await self.online_database.get_specific_user_data(twitch_user_id=payload.sender.id, field="discord_id")
+            if not user_data:
                 debug_print("CommandHandler", "No linked Discord account found for disconnect.")
                 await self.bot.whisper(payload.sender, "You do not have a linked Discord account to disconnect.")
                 return
             if not self.discord_bot:
                 self.discord_bot: DiscordBot = get_reference("DiscordBot")
-            await set_user_data(user_id=payload.sender.id, discord_username="null", discord_secret_code="null", discord_id=0)
+            data = {"discord_username": None, "discord_id": None, "discord_display_name": None}
+            await self.online_database.create_user(payload.sender.id, data)
             await self.bot.whisper(payload.sender, "Your Discord account has been successfully unlinked from your Twitch account.")
             return
         elif message_parts[0].lower() == "!setdefaultvoice":
@@ -772,7 +815,8 @@ class CommandHandler(commands.Component):
                 debug_print("CommandHandler", "Invalid voice provided in whisper.")
                 await self.bot.whisper(payload.sender, f"The voice '{default_voice}' is not valid. Please check the available voices and try again. Note: Voice names are NOT case-sensitive.")
                 return
-            await set_user_data(user_id=payload.sender.id, tts_voice=matched_voice)
+            data = {"tts_voice": matched_voice}
+            await self.online_database.create_user(payload.sender.id, data)
             await self.bot.whisper(payload.sender, f"Your default voice has been set to: {matched_voice}")
             return
         elif message_parts[0].lower() == "!getvoices":
@@ -790,7 +834,8 @@ class CommandHandler(commands.Component):
             chime_option = message_parts[1].lower()
             if chime_option.lower() == "off":
                 debug_print("CommandHandler", "Invalid chime option provided in whisper.")
-                await set_user_data(user_id=payload.sender.id, sound_fx="null")
+                data = {"chime": "off"}
+                await self.online_database.create_user(payload.sender.id, data)
                 await self.bot.whisper(payload.sender, "Your chime has been disabled.")
                 return
             if not self.audio_manager:
@@ -798,7 +843,8 @@ class CommandHandler(commands.Component):
             if "." in chime_option:
                 chime_option = chime_option.rsplit(".", 1)[0]
             if await self.audio_manager.check_sound_fx_exists(chime_option):
-                await set_user_data(user_id=payload.sender.id, sound_fx=chime_option.lower())
+                data = {"chime": chime_option.lower()}
+                await self.online_database.create_user(payload.sender.id, data)
             else:
                 debug_print("CommandHandler", "Invalid chime option provided in whisper.")
                 await self.bot.whisper(payload.sender, f"The chime '{chime_option}' does not exist. Please check the available chimes and try again. Note: Do not include file extensions. Name is NOT case-sensitive.")
@@ -813,13 +859,13 @@ class CommandHandler(commands.Component):
             await self.bot.whisper(payload.sender, f"Available chimes are: {chime_list_str}. Use !setchime <name> to set your preferred chime. Join the discord to suggest more chimes.")
             return
         elif message_parts[0].lower() == "!mystats":
-            user_data = await get_user_data(user_id=payload.sender.id)
-            number_of_messages = user_data.get("number_of_messages", 0)
+            user_data = await self.online_database.get_user_data(twitch_user_id=payload.sender.id)
+            number_of_messages = user_data.get("twitch_number_of_messages", 0)
             bits_donated = user_data.get("bits_donated", 0)
             months_subscribed = user_data.get("months_subscribed", 0)
-            subscriptions_gifted = user_data.get("subscriptions_gifted", 0)
-            points_redeemed = user_data.get("points_redeemed", 0)
-            if user_data["discord_id"] != 0 and user_data["discord_secret_code"] == "null":
+            subscriptions_gifted = user_data.get("subs_gifted", 0)
+            points_redeemed = user_data.get("channel_points_redeemed", 0)
+            if user_data["discord_id"]:
                 if not self.discord_bot:
                     self.discord_bot: DiscordBot = get_reference("DiscordBot")
                 await self.discord_bot.send_direct_message(user_data["discord_id"], f"Hello {user_data['discord_username']}, here are your current Twitch stats:\nMessages Sent: {number_of_messages}\nBits Donated: {bits_donated}\nMonths Subscribed: {months_subscribed}\nSubscriptions Gifted: {subscriptions_gifted}\nChannel Points Redeemed: {points_redeemed}.\nNote: Number of messages and channel points redeemed do not take into account messages or redemptions made while the bot was offline or before the bot started tracking them.")
@@ -835,6 +881,9 @@ class CommandHandler(commands.Component):
         elif isinstance(payload, twitchio.ChannelPointsRedemptionAdd):
             type = "custom"
             debug_print("CommandHandler", f"Handling custom channel points from {payload.user.display_name}: {payload.reward.title}")
+        else:
+            type = "custom"
+            debug_print("CommandHandler", f"Handling unknown type of channel points redemption from {payload.user.display_name}")
         if self.shared_chat:
             if not self.shared_chat_channel_points:
                 debug_print("CommandHandler", "Channel points handler task aborted due to Shared Chat mode.")
@@ -947,7 +996,19 @@ class CommandHandler(commands.Component):
 
     @commands.Component.listener()
     async def event_message(self, payload: twitchio.ChatMessage) -> None:
-        if not self.message_timer: #Initialize the message handler task if it doesn't exist
+        if self.message_timer and self.message_timer.done():
+            try:
+                exc = self.message_timer.exception()
+                if exc:
+                    debug_print("CommandHandler", f"Message handler task exited with error: {exc}")
+            except asyncio.CancelledError:
+                pass
+            except Exception as inspector_error:
+                print(f"Failed to inspect message handler task: {inspector_error}")
+            finally:
+                self.message_timer = None
+        if not self.message_timer:  # Initialize the message handler task if it doesn't exist
+            debug_print("CommandHandler", "Starting message handler task.")
             self.message_timer = asyncio.create_task(self.handle_message())
         debug_print("CommandHandler", f"Received message from {payload.chatter.display_name}.")
         self.message_queue.append(payload)
@@ -1361,8 +1422,7 @@ class CommandHandler(commands.Component):
                     return
                 await ctx.send(_format_quote_entry(quote))
                 return
-
-
+            
     #@commands.command(aliases=list(CUSTOM_COMMANDS.keys()))
     async def custom(self, ctx: commands.Context) -> None:
         # Determine the alias the user invoked (e.g. 'test') — ctx.command.name is the handler name.
@@ -1456,7 +1516,7 @@ def main() -> None:
             try:
                 await setup_gpt_manager()
             except Exception as e:
-                debug_print("AutoBot", f"[ERROR] Failed to run setup_gpt_manager(): {e}")
+                print(f"[ERROR] Failed to run setup_gpt_manager(): {e}")
             prefix = await get_setting("Command Prefix", "!")
 
             async with Bot(database=tdb, subs=subs, prefix=prefix) as bot:
@@ -1468,7 +1528,7 @@ def main() -> None:
     try:
         asyncio.run(runner())
     except KeyboardInterrupt:
-        debug_print("AutoBot", "Shutting down due to KeyboardInterrupt")
+        print("Shutting down due to KeyboardInterrupt")
 
 if __name__ == "__main__":
     main()
