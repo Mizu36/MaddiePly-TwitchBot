@@ -133,10 +133,6 @@ class AudioManager:
         devices = sdl2_audio.get_audio_device_names(iscapture=False)
         for idx, name in enumerate(devices):
             AUDIO_DEVICES.append(name)
-        if get_debug():
-            print("[DEBUG][AudioManager] Available output devices:")
-            for idx, name in enumerate(devices):
-                print(f"  [{idx}] {name}")
         return devices
 
     def set_output_device(self, device_name_or_index):
