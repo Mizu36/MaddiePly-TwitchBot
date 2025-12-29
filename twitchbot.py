@@ -282,6 +282,21 @@ class Bot(commands.AutoBot):
             return 0
         leader = next((l for l in leaderboard.leaders if str(l.user_id) == str(user_id)), None)
         return leader.score if leader else 0
+    
+    async def get_user_info_by_id(self, user_id: str) -> dict:
+        debug_print("AutoBot", f"Fetching user info for user ID: {user_id}")
+        try:
+            users = await self.fetch_users(ids=[user_id])
+            if users and len(users) > 0:
+                user = users[0]
+                return {
+                    "id": str(user.id),
+                    "login": user.name,
+                    "display_name": user.display_name,
+                }
+        except Exception as e:
+            print(f"Failed to fetch user info for {user_id}: {e}")
+        return {}
 
     async def classify_users_for_purge(self, user_ids: list[str]) -> dict[str, str]:
         """Classify users as ok/banned/missing for purge decisions."""
@@ -678,8 +693,8 @@ class CommandHandler(commands.Component):
                     continue
                 message = payload.text
                 time = payload.timestamp.time().strftime("%Y-%m-%d %H:%M:%S")
-                self.message_history.append({"user": user_name, "message": message, "time": payload.timestamp.time()})
-                if len(self.message_history) > 50:
+                self.message_history.append({"user": user_name, "message": message, "time": payload.timestamp.timestamp()})
+                if len(self.message_history) > 100:
                     self.message_history.pop(0)
                 if increment:
                     await increment
@@ -876,13 +891,13 @@ class CommandHandler(commands.Component):
 
     async def handle_custom_channel_points_redeems(self, payload: twitchio.ChannelPointsRedemptionAdd | twitchio.ChannelPointsAutoRedeemAdd) -> None:
         if isinstance(payload, twitchio.ChannelPointsAutoRedeemAdd):
-            type = "auto"
+            redeem_type = "auto"
             debug_print("CommandHandler", f"Handling auto channel points redeem from {payload.user.display_name}: {payload.reward.type}")
         elif isinstance(payload, twitchio.ChannelPointsRedemptionAdd):
-            type = "custom"
+            redeem_type = "custom"
             debug_print("CommandHandler", f"Handling custom channel points from {payload.user.display_name}: {payload.reward.title}")
         else:
-            type = "custom"
+            redeem_type = "custom"
             debug_print("CommandHandler", f"Handling unknown type of channel points redemption from {payload.user.display_name}")
         if self.shared_chat:
             if not self.shared_chat_channel_points:
@@ -893,7 +908,7 @@ class CommandHandler(commands.Component):
         if not self.custom_builder:
             self.custom_builder = CustomPointRedemptionBuilder()
             set_reference("PointBuilder", self.custom_builder)
-        asyncio.create_task(self.custom_builder.channel_points_redemption_handler(payload, type))
+        asyncio.create_task(self.custom_builder.channel_points_redemption_handler(payload, redeem_type))
     
     async def ad_timer(self) -> None:
         while True:
