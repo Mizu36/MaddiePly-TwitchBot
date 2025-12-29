@@ -836,25 +836,29 @@ class CustomPointRedemptionBuilder():
             except Exception:
                 return None
 
-    async def channel_points_redemption_handler(self, payload, type: Literal["custom", "auto"]) -> None:
+    async def channel_points_redemption_handler(self, payload, redeem_type: Literal["custom", "auto"]) -> None:
         # Determine redemption name depending on payload type, determined by if reward has title attribute or type attribute
-        if type == "auto":
+        if redeem_type == "auto":
             redemption_name = payload.reward.type
             points = payload.reward.channel_points
-        elif type == "custom":
+        elif redeem_type == "custom":
             redemption_name = payload.reward.title
             points = payload.reward.cost
 
         change_set_name = await get_setting("Gacha Change Set Redemption Name", "Change Gacha Set")
         gacha_pull_name = await get_setting("Gacha Pull Redemption Name", "Gacha Pull")
         gacha_enabled = await get_setting("Gacha System Enabled", False)
-        if not gacha_enabled and redemption_name in [change_set_name, gacha_pull_name]:
-            debug_print("CustomBuilder", f"Gacha system is disabled; ignoring redemption: {redemption_name}")
-            try:
-                payload.refund(token_for=self.bot.owner_id)
-            except Exception as e:
-                print(f"Failed to refund redemption for disabled gacha system: {e}")
-            return
+        if redemption_name in [change_set_name, gacha_pull_name]:
+            if not gacha_enabled:
+                debug_print("CustomBuilder", f"Gacha system is disabled; ignoring redemption: {redemption_name}")
+                try:
+                    payload.refund(token_for=self.bot.owner_id)
+                    if not self.twitch_bot:
+                        self.twitch_bot = get_reference("TwitchBot")
+                    self.twitch_bot.send_chat("The gacha system is currently disabled. Your channel points have been refunded.")
+                except Exception as e:
+                    print(f"Failed to refund redemption for disabled gacha system: {e}")
+                return
         user_id = payload.user.id
 
         if not self.online_database:
@@ -882,7 +886,10 @@ class CustomPointRedemptionBuilder():
                     self.gacha_handler = get_reference("GachaHandler")
                 if self.gacha_handler:
                     event = await self.gacha_handler.roll_for_gacha(twitch_user_id=user_id, num_pulls=1)
-                    self.event_manager.add_event(event)
+                    if type(event) is dict:
+                        self.event_manager.add_event(event)
+                    else:
+                        debug_print("CustomBuilder", "Gacha pull did not return a valid event dictionary.")
                 return
         
         custom_reward = await get_custom_reward(redemption_name, "channel_points")
@@ -929,8 +936,9 @@ class CustomPointRedemptionBuilder():
             debug_print("CustomBuilder", f"User ID: {user_id} does not exist in the database. Creating user entry.")
             data = {"twitch_username": payload.user.name, "twitch_display_name": payload.user.display_name, "active_gacha_set": "humble beginnings"}
             await self.online_database.create_user(user_id, data)
-        if self.gacha_handler and await get_setting("Gacha System Enabled", False):
-            gacha_task = asyncio.create_task(self.gacha_handler.roll_for_gacha(payload.user.id, number_of_rolls, bits_toward_next_pull=bits % 500))
+        if await get_setting("Gacha System Enabled", False):
+            if self.gacha_handler:
+                gacha_task = asyncio.create_task(self.gacha_handler.roll_for_gacha(payload.user.id, number_of_rolls, bits_toward_next_pull=bits % 500))
         if not self.online_database:
             self.online_database = get_reference("OnlineDatabase")
         user_data = await self.online_database.get_specific_user_data(twitch_user_id=user_id, field="bits_donated")
@@ -1595,7 +1603,8 @@ class CustomPointRedemptionBuilder():
                 ready_opacity=ready_opacity,
             )
             discord_integration = await get_setting("Discord Integration Enabled", False)
-            if discord_integration and not cache.get("discord_sent"):
+            meme_sharing = await get_setting("Discord Meme Sharing Enabled", False)
+            if discord_integration and meme_sharing and not cache.get("discord_sent"):
                 self.discord_bot = get_reference("DiscordBot")
                 if self.discord_bot:
                     channel_id = await get_setting("Discord Meme Channel ID", None)
