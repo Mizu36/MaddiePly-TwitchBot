@@ -6,6 +6,7 @@ from obs_websockets import OBSWebsocketsManager
 from openai_chat import OpenAiManager
 from tools import get_reference, set_reference, debug_print, path_from_app_root
 import random
+import math
 import asyncio
 import time
 import threading
@@ -26,6 +27,7 @@ class AssistantManager():
         self.online_database = get_reference("OnlineDatabase")
         self.twitch_bot = get_reference("TwitchBot")
         self.handler = get_reference("CommandHandler")
+        self.emotes = ['moddipOp', 'moddipLeave', 'moddipNUwUke', 'moddipCAT', 'moddipSlep', 'moddipUwU' ,'moddipGUN', 'moddipRage', 'moddipBlush', 'moddipHypers', 'moddipAlert', 'moddipRIP', 'moddipLOwOsion' ,'moddipOut', 'moddipJudge', 'moddipAYAYA', 'moddipSad', 'moddipS', 'moddipOggers', 'moddipWTF']
         self._ensure_models_loaded()
         debug_print("Assistant", "AssistantManager initialized.")
 
@@ -85,6 +87,14 @@ class AssistantManager():
         prompts = [{"role": "system", "content": response_prompt}, prompt]
         chatGPT = asyncio.to_thread(gpt_manager.chat, prompts, use_twitch_emotes=True)
         response = await chatGPT
+        #Normalize emotes
+        response_words = response.split()
+        for i, word in enumerate(response_words):
+            if word.lower().startswith("moddip"):
+                for emote in self.emotes:
+                    if word.lower() == emote.lower():
+                        response_words[i] = emote
+        response = " ".join(response_words)
         await self.twitch_bot.send_chat(response)
 
     async def general_response(self, prompt: str) -> str:
@@ -107,9 +117,9 @@ class AssistantManager():
             self.event_manager.resume()
             return
         debug_print("Assistant", f"You said: {mic_result}")
-        prompt_text = await get_prompt("Respond to Streamer", False)
+        prompt_text = await get_prompt("Respond to Streamer")
         prompt = {"role": "system", "content": prompt_text}
-        prompts = [prompt, {"role": "user", "content": "ModdiPly: " + mic_result}]
+        prompts = [prompt, {"role": "user", "content": f"ModdiPly: {mic_result}"}]
         chatGPT = asyncio.to_thread(gpt_manager.chat, prompts)
         response = await chatGPT
         output = await self.tts(response)
@@ -130,15 +140,19 @@ class AssistantManager():
         if self.handler is None:
             debug_print("Assistant", "No CommandHandler reference available when summarizing chat.")
         else:
-            message_history = self.handler.get_message_history()
+            message_history = self.handler.get_total_message_history()
 
         if message_history:
+            message_history.reverse()  # Reverse to have most recent messages first
             try:
                 debug_print("Assistant", f"Found {len(message_history)} messages in CommandHandler message history.")
                 for message in message_history:
                     try:
                         if current_time - message["time"] <= 300:
                             recent_messages.append(message)
+                        else:
+                            # Since messages are in chronological order, we can break early
+                            break
                     except Exception:
                         # Skip malformed entries
                         continue
@@ -704,6 +718,11 @@ class AutoMod():
     
 class EventManager():
     """Manages a queue of events to be played by the assistant at intervals."""
+
+    GACHA_BATCH_SIZE = 5
+    GACHA_MIN_HOLD_SECONDS = 6.0
+    GACHA_BATCH_HOLD_SECONDS = 8.0
+
     def __init__(self):
         self.db = DATABASE
         self.enabled = False
@@ -767,13 +786,13 @@ class EventManager():
     async def play_next(self) -> None:
         """Plays the next event in the queue."""
         debug_print("EventManager", "Playing next event.")
+        if self.currently_playing:
+            debug_print("EventManager", "Already playing an event, skipping.")
+            return
         if not self.assistant:
             self.assistant = get_reference("AssistantManager")
         if not self.event_queue:
             debug_print("EventManager", "No events in queue.")
-            return
-        if self.currently_playing:
-            debug_print("EventManager", "Already playing an event, skipping.")
             return
         event = self.event_queue.pop(0)
         if event:
@@ -784,9 +803,7 @@ class EventManager():
                 if event["type"] in ["bits", "channel_points"]:
                     await self.builder.run_custom_redemption(event)
                 elif event["type"] == "gacha":
-                    if not self.gacha_handler:
-                        self.gacha_handler = get_reference("GachaHandler")
-                    await self.gacha_handler.handle_gacha_event(event)
+                    await self._play_gacha_event(event)
                 else:
                     audio_payload = self._resolve_audio_payload(event)
                     if audio_payload is None:
@@ -804,9 +821,12 @@ class EventManager():
     async def play_previous(self) -> None:
         """Plays the previous event."""
         debug_print("EventManager", "Playing previous event.")
+        if self.currently_playing:
+            debug_print("EventManager", "Already playing an event, skipping.")
+            return
         if not self.assistant:
             self.assistant = get_reference("AssistantManager")
-        if self.previous_event and not self.currently_playing:
+        if self.previous_event:
             if not self.builder:
                 self.builder = get_reference("PointBuilder")
             self.currently_playing = True
@@ -814,9 +834,7 @@ class EventManager():
                 if self.previous_event["type"] in ["bits", "channel_points"]:
                     await self.builder.run_custom_redemption(self.previous_event)
                 elif self.previous_event["type"] == "gacha":
-                    if not self.gacha_handler:
-                        self.gacha_handler = get_reference("GachaHandler")
-                    await self.gacha_handler.handle_gacha_event(self.previous_event)
+                    await self._play_gacha_event(self.previous_event)
                 else:
                     audio_payload = self._resolve_audio_payload(self.previous_event)
                     if audio_payload is None:
@@ -832,13 +850,16 @@ class EventManager():
     async def play_specific(self, played: bool, index: int) -> None:
         """Plays a specific event from the queue or played list."""
         debug_print("EventManager", f"Playing specific event. Played: {played}, Index: {index}")
+        if self.currently_playing:
+            debug_print("EventManager", "Already playing an event, skipping.")
+            return
         if not self.assistant:
             self.assistant = get_reference("AssistantManager")
         if played:
             event = self.played_events[index]
         else:
             event = self.event_queue.pop(index)
-        if event and not self.currently_playing:
+        if event:
             if not self.builder:
                 self.builder = get_reference("PointBuilder")
             try:
@@ -846,9 +867,7 @@ class EventManager():
                 if event["type"] in ["bits", "channel_points"]:
                     await self.builder.run_custom_redemption(event)
                 elif event["type"] == "gacha":
-                    if not self.gacha_handler:
-                        self.gacha_handler = get_reference("GachaHandler")
-                    await self.gacha_handler.handle_gacha_event(event)
+                    await self._play_gacha_event(event)
                 else:
                     audio_payload = self._resolve_audio_payload(event)
                     if audio_payload is None:
@@ -867,6 +886,42 @@ class EventManager():
             debug_print("EventManager", "Already playing an event, skipping.")
         else:
             debug_print("EventManager", "No event found to play.")
+
+    async def _play_gacha_event(self, event: dict) -> None:
+        if not event:
+            return
+        if not self.gacha_handler:
+            self.gacha_handler = get_reference("GachaHandler")
+        await self.gacha_handler.handle_gacha_event(event)
+        await self._hold_gacha_slot(event)
+
+    async def _hold_gacha_slot(self, event: dict | None) -> None:
+        hold_seconds = self._estimate_gacha_hold_seconds(event)
+        if hold_seconds <= 0:
+            return
+        debug_print("EventManager", f"Holding gacha stage for {hold_seconds:.2f} seconds.")
+        try:
+            await asyncio.sleep(hold_seconds)
+        except asyncio.CancelledError:
+            raise
+
+    def _estimate_gacha_hold_seconds(self, event: dict | None) -> float:
+        if not event:
+            return 0.0
+        results = event.get("results")
+        pulls = 0
+        if isinstance(results, list) and results:
+            pulls = len(results)
+        else:
+            raw_pulls = event.get("number_of_pulls")
+            try:
+                pulls = int(raw_pulls or 0)
+            except (TypeError, ValueError):
+                pulls = 0
+        if pulls <= 0:
+            return 0.0
+        batches = max(1, math.ceil(pulls / self.GACHA_BATCH_SIZE))
+        return max(self.GACHA_MIN_HOLD_SECONDS, batches * self.GACHA_BATCH_HOLD_SECONDS)
     
     def _resolve_audio_payload(self, event: dict):
         """Return the appropriate audio payload (metadata dict or raw path)."""
