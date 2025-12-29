@@ -349,21 +349,21 @@ class OnlineDatabase:
     
     async def record_gacha_pull(self, twitch_user_id: str, gacha_id: str, is_shiny: bool = False) -> dict[str, Any]:
         """Records a gacha pull for a user. Increments pull_count by 1, and sets is_shiny if applicable.
-        If no record exists, creates one with pull_count = 1.
+        If no record exists, creates one with pull_count = 1. Shiny and not shiny variants of the same gacha are tracked seperately.
         """
         debug_print("OnlineDatabase", f"Recording gacha pull for twitch_user_id '{twitch_user_id}' and gacha_id '{gacha_id}', is_shiny={is_shiny}.")
         user = await self.get_user_data(twitch_user_id)
         if not user:
             raise ValueError(f"User with twitch_user_id '{twitch_user_id}' does not exist.")
         user_id = user["id"]
-        existing_records = await self.fetch_data(
-            "user_gacha_pulls",
-            "user_id",
-            return_columns=None,
-            value=user_id,
-        )
         await self.increment_column("gacha", "id", gacha_id, "pulled", increment_by=1)
-        record = next((r for r in existing_records if r["gacha_id"] == gacha_id), None)
+        matching_records = await self._run_fetch(
+            "SELECT * FROM user_gacha_pulls WHERE user_id = $1 AND gacha_id = $2 AND is_shiny = $3",
+            user_id,
+            gacha_id,
+            is_shiny,
+        )
+        record = matching_records[0] if matching_records else None
         if record:
             new_pull_count = record["pull_count"] + 1
             updated_record = await self.update_data(
@@ -372,7 +372,7 @@ class OnlineDatabase:
                 record["id"],
                 {
                     "pull_count": new_pull_count,
-                    "is_shiny": is_shiny or record["is_shiny"],
+                    "is_shiny": is_shiny,
                 },
             )
             return updated_record[0] if updated_record else {}
@@ -395,6 +395,13 @@ class OnlineDatabase:
         if rows and not rows[0].get("enabled", True):
             return None
         return rows if rows else None
+
+    async def get_enabled_gacha_sets(self) -> list[str]:
+        """Return a list of set names that currently have enabled gacha entries."""
+        debug_print("OnlineDatabase", "Fetching enabled gacha set names.")
+        query = "SELECT DISTINCT set_name FROM gacha WHERE enabled = TRUE ORDER BY set_name"
+        rows = await self._run_fetch(query)
+        return [row.get("set_name") for row in rows if row.get("set_name")]
     
     async def get_set_level_for_user(self, twitch_user_id: str, set_name: str) -> int:
         """Calculates the gacha set level for a user based on their pulls in that set."""
@@ -634,7 +641,7 @@ class OnlineStorage:
         if not gacha_data:
             raise ValueError(f"Gacha with ID '{gacha_id}' does not exist in the database.")
         
-        local_base = Path(get_app_root()) / "media" / "gacha"
+        local_base = Path(get_app_root()) / "media" / "gacha" / "sets"
         name = gacha_data["name"]
         set_name = gacha_data["set_name"]
         rarity = gacha_data["rarity"]
@@ -648,8 +655,9 @@ class OnlineStorage:
         rarity_folder = rarity_folder_map.get(rarity)
 
         local_dir = local_base / set_name / rarity_folder
+        shiny_dir = local_base / set_name / rarity_folder / "shiny"
         if is_shiny:
-            local_path = local_dir / f"shiny_{name}.png"
+            local_path = shiny_dir / f"{name}.png"
         else:
             local_path = local_dir / f"{name}.png"
         if local_path.exists():
