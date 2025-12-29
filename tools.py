@@ -22,6 +22,7 @@ POINT_BUILDER = None
 ONLINE_DATABASE = None
 ONLINE_STORAGE = None
 GACHA_HANDLER = None
+GACHA_OVERLAY = None
 
 def get_debug() -> bool:
     """Fetches the DEBUG setting from the database."""
@@ -151,9 +152,14 @@ def set_reference(name: str, reference) -> None:
         GACHA_HANDLER = reference
         if not GACHA_HANDLER:
             success = "to None."
+    elif name == "GachaOverlay":
+        global GACHA_OVERLAY
+        GACHA_OVERLAY = reference
+        if not GACHA_OVERLAY:
+            success = "to None."
     debug_print("Tools", f"{name} reference set {success}")
 
-def get_reference(name: Literal["TwitchBot", "ResponseTimer", "DiscordBot", "ElevenLabsManager", "SpeechToTextManager", "AssistantManager", "EventManager", "AutoMod", "AudioManager", "OBSManager", "GPTManager", "PointBuilder", "MessageScheduler", "CommandHandler", "OnlineDatabase", "OnlineStorage", "GachaHandler"]):
+def get_reference(name: Literal["TwitchBot", "ResponseTimer", "DiscordBot", "ElevenLabsManager", "SpeechToTextManager", "AssistantManager", "EventManager", "AutoMod", "AudioManager", "OBSManager", "GPTManager", "PointBuilder", "MessageScheduler", "CommandHandler", "OnlineDatabase", "OnlineStorage", "GachaHandler", "GachaOverlay"]):
     """Gets a global reference by name"""
     if name == "TwitchBot":
         if not TWITCH_BOT:
@@ -223,3 +229,7 @@ def get_reference(name: Literal["TwitchBot", "ResponseTimer", "DiscordBot", "Ele
         if not GACHA_HANDLER:
             debug_print("Tools", "GachaHandler reference requested but not set.")
         return GACHA_HANDLER
+    elif name == "GachaOverlay":
+        if not GACHA_OVERLAY:
+            debug_print("Tools", "GachaOverlay reference requested but not set.")
+        return GACHA_OVERLAY
