@@ -373,6 +373,10 @@ class DBEditor(tk.Tk):
         self._purge_users_thread = None
         self.purge_users_btn = None
         self._users_font = None
+        self._users_sort_column: str | None = None
+        self._users_sort_direction: str | None = None
+        self._users_column_headings: dict[str, str] = {}
+        self._users_source_rows: list[dict[str, typing.Any]] = []
         self._event_tab_refresh_job = None
         self._obs_warning_label: tk.Label | None = None
         self._obs_warning_job: str | None = None
@@ -5668,8 +5672,14 @@ class DBEditor(tk.Tk):
         ]
 
         tree = ttk.Treeview(users_frame, columns=columns, show="headings", selectmode="browse")
+        self._users_column_headings = {col_id: heading for col_id, heading, _ in column_meta}
         for col_id, heading, width in column_meta:
-            tree.heading(col_id, text=heading, anchor=tk.CENTER)
+            tree.heading(
+                col_id,
+                text=heading,
+                anchor=tk.CENTER,
+                command=lambda column_id=col_id: self._on_users_heading_click(column_id),
+            )
             tree.column(col_id, width=width, anchor=tk.CENTER, stretch=True)
 
         try:
@@ -5683,6 +5693,7 @@ class DBEditor(tk.Tk):
         tree.bind("<Motion>", self._on_users_tree_motion)
         tree.bind("<Leave>", lambda _evt: self._hide_users_tooltip())
         self.users_tree = tree
+        self._update_users_tree_headings()
 
         self.refresh_users_tab()
 
@@ -5702,19 +5713,13 @@ class DBEditor(tk.Tk):
         return asyncio.run(_runner())
 
     def _fetch_remote_users(self) -> list[dict[str, typing.Any]]:
-        """Fetch user rows directly from Supabase and sort by display name."""
+        """Fetch user rows directly from Supabase."""
 
         def _job(db: OnlineDatabase):
             return db.fetch_table("users", limit=5000)
 
         rows: list[dict[str, typing.Any]] = self._run_online_db_task(_job) or []
-
-        def _sort_key(row: dict[str, typing.Any]) -> tuple[str, str]:
-            primary = row.get("twitch_display_name") or row.get("twitch_username") or row.get("username") or ""
-            secondary = row.get("twitch_id") or row.get("id") or ""
-            return (str(primary).casefold(), str(secondary).casefold())
-
-        return sorted(rows, key=_sort_key)
+        return rows
 
     def refresh_users_tab(self) -> None:
         if self.users_tree is None:
@@ -5731,67 +5736,221 @@ class DBEditor(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _apply_users_rows(self, rows: list[dict]) -> None:
+    def _apply_users_rows(self, rows: list[dict] | None) -> None:
         if self.users_tree is None:
             return
+        source_rows = list(rows or [])
+        self._users_source_rows = source_rows
+        processed_rows = [
+            self._prepare_user_row(dict(row), idx)
+            for idx, row in enumerate(source_rows)
+        ]
+        ordered_rows = self._get_sorted_user_rows(processed_rows)
         for child in self.users_tree.get_children():
             self.users_tree.delete(child)
         self.users_row_data = {}
-        for idx, row in enumerate(rows):
-            row_data = dict(row)
-            user_id = str(
-                row_data.get("twitch_id")
-                or row_data.get("id")
-                or row_data.get("username")
-                or idx
-            )
-            display_name = (
-                row_data.get("twitch_display_name")
-                or row_data.get("display_name")
-                or row_data.get("twitch_username")
-                or row_data.get("username")
-                or "Unknown"
-            )
-            discord_username = (
-                row_data.get("discord_username")
-                or row_data.get("discord_display_name")
-                or ""
-            )
-            discord_linked = bool(row_data.get("discord_id"))
-            if not discord_linked and not row_data.get("discord_id"):
-                discord_linked = bool(
-                    discord_username and str(discord_username).strip().lower() not in {"", "null"}
-                )
-            discord_status = "Linked" if discord_linked else "Unlinked"
-            values = (
-                display_name,
-                discord_status,
-                row_data.get("twitch_number_of_messages")
-                or row_data.get("number_of_messages")
-                or 0,
-                row_data.get("bits_donated") or 0,
-                row_data.get("months_subscribed") or 0,
-                row_data.get("subs_gifted")
-                or row_data.get("subscriptions_gifted")
-                or 0,
-                row_data.get("channel_points_redeemed")
-                or row_data.get("points_redeemed")
-                or 0,
-                row_data.get("tts_voice") or "",
-                row_data.get("date_added")
-                or row_data.get("created_at")
-                or "",
-                row_data.get("chime") or row_data.get("sound_fx") or "",
-            )
+        for idx, row_data in enumerate(ordered_rows):
+            user_id = row_data.get("_tree_id") or f"row-{idx}"
+            values = self._build_user_row_values(row_data)
             tag = "even" if (idx % 2 == 0) else "odd"
             try:
                 self.users_tree.insert("", tk.END, iid=user_id, values=values, tags=(tag,))
             except Exception:
                 self.users_tree.insert("", tk.END, values=values, tags=(tag,))
-            row_data["_tree_id"] = user_id
             self.users_row_data[user_id] = row_data
-        self.users_count_var.set(f"Total Viewers: {len(rows)}")
+        self.users_count_var.set(f"Total Viewers: {len(source_rows)}")
         self._autosize_users_columns()
+        self._update_users_tree_headings()
+
+    def _prepare_user_row(self, row: dict[str, typing.Any], fallback_index: int) -> dict[str, typing.Any]:
+        row_data = dict(row)
+        row_data["_fallback_index"] = fallback_index
+
+        def _first_str(*keys: str) -> str:
+            for key in keys:
+                value = row_data.get(key)
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if text:
+                    return text
+            return ""
+
+        def _first_int(*keys: str, default: int = 0) -> int:
+            for key in keys:
+                value = row_data.get(key)
+                if value is None or value == "":
+                    continue
+                try:
+                    return int(value)
+                except (ValueError, TypeError):
+                    try:
+                        return int(float(value))
+                    except Exception:
+                        continue
+            return default
+
+        display_name = _first_str("twitch_display_name", "display_name", "twitch_username", "username") or "Unknown"
+        discord_username = _first_str("discord_username", "discord_display_name")
+        discord_id = row_data.get("discord_id")
+        discord_linked = bool(discord_id) or bool(
+            discord_username and discord_username.strip().lower() not in {"", "null"}
+        )
+        date_value = _first_str("date_added", "created_at")
+        tts_voice = _first_str("tts_voice")
+        chime_value = _first_str("chime", "sound_fx")
+
+        row_data["_tree_id"] = self._resolve_user_row_id(row_data, fallback_index)
+        row_data["_display_name"] = display_name
+        row_data["_display_name_sort"] = display_name.casefold()
+        row_data["_discord_status"] = "Linked" if discord_linked else "Unlinked"
+        row_data["_discord_linked"] = discord_linked
+        row_data["_messages"] = _first_int("twitch_number_of_messages", "number_of_messages")
+        row_data["_bits"] = _first_int("bits_donated")
+        row_data["_months"] = _first_int("months_subscribed")
+        row_data["_gifts"] = _first_int("subs_gifted", "subscriptions_gifted")
+        row_data["_points"] = _first_int("channel_points_redeemed", "points_redeemed")
+        row_data["_tts_voice"] = tts_voice
+        row_data["_tts_voice_sort"] = tts_voice.casefold()
+        row_data["_date_value"] = date_value
+        row_data["_date_sort_key"] = self._parse_date_sort_key(date_value)
+        row_data["_chime"] = chime_value
+        row_data["_chime_sort"] = chime_value.casefold()
+        return row_data
+
+    def _resolve_user_row_id(self, row: dict[str, typing.Any], fallback_index: int) -> str:
+        for key in ("twitch_id", "id", "username", "twitch_username"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return f"row-{fallback_index}"
+
+    def _build_user_row_values(self, row_data: dict[str, typing.Any]) -> tuple[typing.Any, ...]:
+        return (
+            row_data.get("_display_name", "Unknown"),
+            row_data.get("_discord_status", "Unlinked"),
+            row_data.get("_messages", 0),
+            row_data.get("_bits", 0),
+            row_data.get("_months", 0),
+            row_data.get("_gifts", 0),
+            row_data.get("_points", 0),
+            row_data.get("_tts_voice", ""),
+            row_data.get("_date_value", ""),
+            row_data.get("_chime", ""),
+        )
+
+    def _get_sorted_user_rows(self, rows: list[dict[str, typing.Any]]) -> list[dict[str, typing.Any]]:
+        if not rows:
+            return []
+        column = self._users_sort_column
+        direction = self._users_sort_direction
+        if not column or direction not in {"asc", "desc"}:
+            return sorted(rows, key=self._user_identity_sort_key)
+        reverse = direction == "desc"
+        return sorted(
+            rows,
+            key=lambda row: (
+                self._users_sort_key_for_column(row, column),
+                self._user_identity_sort_key(row),
+            ),
+            reverse=reverse,
+        )
+
+    def _users_sort_key_for_column(self, row: dict[str, typing.Any], column: str):
+        if column == "display_name":
+            return (row.get("_display_name_sort", ""),)
+        if column == "discord_status":
+            return (
+                0 if row.get("_discord_linked") else 1,
+                row.get("_display_name_sort", ""),
+            )
+        if column == "messages":
+            return (row.get("_messages", 0),)
+        if column == "bits":
+            return (row.get("_bits", 0),)
+        if column == "months":
+            return (row.get("_months", 0),)
+        if column == "gifts":
+            return (row.get("_gifts", 0),)
+        if column == "points":
+            return (row.get("_points", 0),)
+        if column == "tts_voice":
+            return (row.get("_tts_voice_sort", ""),)
+        if column == "date_added":
+            return row.get("_date_sort_key", (1, ""))
+        if column == "chime":
+            return (row.get("_chime_sort", ""),)
+        return self._user_identity_sort_key(row)
+
+    def _user_identity_sort_key(self, row: dict[str, typing.Any]) -> tuple[typing.Any, typing.Any]:
+        for candidate in (row.get("id"), row.get("twitch_id"), row.get("_tree_id")):
+            if candidate is None:
+                continue
+            text = str(candidate).strip()
+            if not text:
+                continue
+            if text.isdigit():
+                return (0, int(text))
+            try:
+                return (0, int(float(text)))
+            except Exception:
+                return (1, text.casefold())
+        return (2, row.get("_fallback_index", 0))
+
+    def _parse_date_sort_key(self, value: str | None) -> tuple[int, typing.Any]:
+        if not value:
+            return (1, "")
+        text = str(value).strip()
+        if not text:
+            return (1, "")
+        normalized = text
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        try:
+            dt_value = datetime.datetime.fromisoformat(normalized)
+            return (0, dt_value.timestamp())
+        except Exception:
+            return (1, text)
+
+    def _on_users_heading_click(self, column_id: str) -> None:
+        if column_id not in self._users_column_headings:
+            return
+        if self._users_sort_column == column_id:
+            self._users_sort_direction = self._cycle_users_sort_direction(self._users_sort_direction)
+            if self._users_sort_direction is None:
+                self._users_sort_column = None
+        else:
+            self._users_sort_column = column_id
+            self._users_sort_direction = "asc"
+        self._apply_users_rows(list(self._users_source_rows))
+
+    @staticmethod
+    def _cycle_users_sort_direction(current: str | None) -> str | None:
+        if current == "asc":
+            return "desc"
+        if current == "desc":
+            return None
+        return "asc"
+
+    def _update_users_tree_headings(self) -> None:
+        if self.users_tree is None or not self._users_column_headings:
+            return
+        for col_id, base_label in self._users_column_headings.items():
+            suffix = ""
+            if self._users_sort_column == col_id:
+                if self._users_sort_direction == "asc":
+                    suffix = " ↑"
+                elif self._users_sort_direction == "desc":
+                    suffix = " ↓"
+            self.users_tree.heading(
+                col_id,
+                text=f"{base_label}{suffix}",
+                anchor=tk.CENTER,
+                command=lambda column_id=col_id: self._on_users_heading_click(column_id),
+            )
 
     def _on_users_tree_double_click(self, event) -> None:
         if self.users_tree is None:
