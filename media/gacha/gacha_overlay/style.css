@@ -1,18 +1,12 @@
 @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&family=Oxanium:wght@500;600&display=swap");
 
 :root {
-  --card-rise-distance: -360px;
   --card-start-offset: 0px;
-  --card-shadow: 0 24px 40px rgba(0, 0, 0, 0.45);
   --label-bg: rgba(8, 9, 16, 0.65);
   --label-border: rgba(91, 224, 230, 0.45);
   --label-text: #fdfdfd;
   --level-red: #ff5c7a;
   --level-green: #6bffb8;
-  --legendary-glow: rgba(255, 198, 101, 0.8);
-  --epic-glow: rgba(138, 178, 255, 0.75);
-  --rare-glow: rgba(125, 255, 244, 0.6);
-  --common-glow: rgba(255, 255, 255, 0.15);
   --level-peak-scale: 1.8;
   --card-rise-duration: 650ms;
   --card-rise-easing: cubic-bezier(0.22, 1, 0.36, 1);

@@ -12,11 +12,7 @@
     CARD_REVEAL_DELAY_MS: 250,
     STAGE_HANDOFF_DELAY_MS: 50,
     SILHOUETTE_DELAY_MS: 250,
-    RISE_STEPS: 28,
     FRAME_DELAY_MS: 20,
-    LABEL_FADE_START_RATIO: 0.18,
-    LABEL_FADE_DURATION_RATIO: 0.35,
-    SILHOUETTE_FADE_MULT: 4,
     CARD_TARGET_SCALE: 0.85,
     CARD_START_RATIO: 0.28,
     CARD_MULTI_START_RATIO: 0.22,
@@ -1393,25 +1389,8 @@
     });
   }
 
-  function computeLabelFadeProgress(cardRatio, startRatio, durationRatio) {
-    const start = Math.max(0, startRatio);
-    const duration = Math.max(0.01, durationRatio);
-    return clamp((cardRatio - start) / duration, 0, 1);
-  }
-
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
-  }
-
-  function lerp(a, b, t) {
-    return a + (b - a) * t;
-  }
-
-  function easeOutBack(value) {
-    const c1 = 1.70158;
-    const c3 = c1 + 1;
-    const t = value - 1;
-    return 1 + c3 * t ** 3 + c1 * t ** 2;
   }
 
   function applyJitter(base, ratio) {
