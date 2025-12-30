@@ -4,7 +4,9 @@
   const CONFIG = {
     MAX_VISIBLE: 4,
     HORIZONTAL_SPACING: 450,
-    CARD_STAGGER_MS: 120,
+    DROP_STAGGER_MS: 120,
+    OPENING_STAGGER_MS: 120,
+    CARD_STAGGER_MS: 60,
     DROP_FREEZE_MS: 250,
     CONVERSION_CHAIN_DELAY_MS: 250,
     CARD_REVEAL_DELAY_MS: 250,
@@ -484,6 +486,8 @@
       label.className = "rarity-badge-label";
       label.textContent = meta.label || "?";
       root.append(svg, label);
+      root.classList.add("is-stealthed");
+      root.style.setProperty("--badge-scale", "0.05");
       container.append(root);
       return { root, svg, label, meta };
     }
@@ -498,7 +502,7 @@
         shapeEl = document.createElementNS(SVG_NS, "circle");
         shapeEl.setAttribute("cx", "60");
         shapeEl.setAttribute("cy", "60");
-        shapeEl.setAttribute("r", "26");
+        shapeEl.setAttribute("r", "38");
       } else if (shapeName === "triangle") {
         shapeEl = document.createElementNS(SVG_NS, "polygon");
         shapeEl.setAttribute("points", buildRegularPolygonPoints(3, 54));
@@ -520,9 +524,11 @@
         shapeEl.setAttribute("cy", "60");
         shapeEl.setAttribute("r", "52");
       }
-      const strokeColor = meta.stroke || "rgba(12, 10, 24, 0.45)";
+      const strokeColor = meta.stroke || "#050505";
+      const strokeWidth = Number(meta.strokeWidth ?? 5);
       shapeEl.setAttribute("stroke", strokeColor);
-      shapeEl.setAttribute("stroke-width", "6");
+      shapeEl.setAttribute("stroke-width", strokeWidth.toString());
+      shapeEl.setAttribute("stroke-linejoin", "round");
       shapeEl.setAttribute("vector-effect", "non-scaling-stroke");
 
       if (meta.gradientStops && meta.gradientStops.length) {
@@ -668,7 +674,8 @@
 
     async _runDropStage(entries) {
       overlayLog("Drop stage", { count: entries.length });
-      const tasks = entries.map((entry, index) => this._playStageVideo(entry, "drop", index * CONFIG.CARD_STAGGER_MS, true));
+      const dropStagger = Math.max(0, Number(CONFIG.DROP_STAGGER_MS ?? CONFIG.CARD_STAGGER_MS) || 0);
+      const tasks = entries.map((entry, index) => this._playStageVideo(entry, "drop", index * dropStagger, true));
       await Promise.all(tasks);
     }
 
@@ -714,6 +721,7 @@
         return;
       }
       entries.forEach((entry) => this._prepareCardReveal(entry));
+      this._exposePreparedCards(entries);
       if (CONFIG.CARD_PRIME_HOLD_MS > 0) {
         await sleep(CONFIG.CARD_PRIME_HOLD_MS);
       }
@@ -741,8 +749,21 @@
       metrics.startScale = behindScale;
       entry.cardRig.style.setProperty("--card-scale", behindScale.toFixed(3));
       entry.cardRig.style.setProperty("--silhouette-strength", "1");
-      entry.cardRig.classList.add("is-hidden");
+      entry.cardRig.classList.add("is-hidden", "is-stealthed");
       this._setCardLayer(entry, "behind");
+    }
+
+    _exposePreparedCards(entries) {
+      if (!Array.isArray(entries) || !entries.length) {
+        return;
+      }
+      entries.forEach((entry) => {
+        if (!entry?.cardRig) {
+          return;
+        }
+        entry.cardRig.classList.add("is-stealthed");
+        this._setCardLayer(entry, "behind");
+      });
     }
 
     _measureVideoStackHeight(entry) {
@@ -753,22 +774,70 @@
 
     async _runOpeningStage(entries) {
       overlayLog("Opening stage", { count: entries.length });
-      const tasks = entries.map((entry, index) => this._playOpeningEntry(entry, index));
+      if (!entries.length) {
+        return;
+      }
+      const orderedEntries = [...entries].sort((a, b) => (a.order || 0) - (b.order || 0));
+      const fadeTask = this._fadeInCardBackdrops(orderedEntries);
+      const videoTasks = orderedEntries.map((entry, index) => this._playOpeningVideo(entry, index));
+      const revealChainTask = this._runOpeningRevealChain(orderedEntries);
+      await Promise.all([...videoTasks, revealChainTask, fadeTask]);
+    }
+
+    _fadeInCardBackdrops(entries) {
+      if (!Array.isArray(entries) || !entries.length) {
+        return Promise.resolve();
+      }
+      return Promise.all(
+        entries.map(
+          (entry) =>
+            new Promise((resolve) => {
+              const rig = entry?.cardRig;
+              if (!rig) {
+                resolve();
+                return;
+              }
+              rig.classList.add("is-stealthed");
+              rig.classList.remove("is-hidden");
+              requestAnimationFrame(() => {
+                rig.classList.remove("is-stealthed");
+                resolve();
+              });
+            }),
+        ),
+      );
+    }
+
+    async _playOpeningVideo(entry, orderIndex) {
+      const openingStagger = Math.max(0, Number(CONFIG.OPENING_STAGGER_MS ?? CONFIG.CARD_STAGGER_MS) || 0);
+      const staggerDelay = Math.max(0, (Number(orderIndex) || 0) * openingStagger);
+      if (staggerDelay > 0) {
+        await sleep(staggerDelay);
+      }
+      const openingVideo = entry.videos.opening?.dataset?.src ? entry.videos.opening : null;
+      if (!openingVideo) {
+        return;
+      }
+      await this._playStageVideo(entry, "opening", 0, false);
+    }
+
+    async _runOpeningRevealChain(entries) {
+      if (!Array.isArray(entries) || !entries.length) {
+        return;
+      }
+      const tasks = entries.map((entry, index) => {
+        const delay = this._computeChainRevealDelay(entry, index);
+        return this._animateCard(entry, delay, null, { skipVideoGate: true });
+      });
       await Promise.all(tasks);
     }
 
-    async _playOpeningEntry(entry, orderIndex) {
-      const stageDelay = orderIndex * CONFIG.CARD_STAGGER_MS;
-      if (stageDelay > 0) {
-        await sleep(stageDelay);
-      }
-      const openingVideo = entry.videos.opening?.dataset?.src ? entry.videos.opening : null;
-      const revealDelay = typeof entry.data?.revealTime === "number" ? entry.data.revealTime : CONFIG.CARD_REVEAL_DELAY_MS;
-      const videoPromise = openingVideo
-        ? this._playStageVideo(entry, "opening", 0, false)
-        : Promise.resolve();
-      const cardPromise = this._animateCard(entry, revealDelay, openingVideo);
-      await Promise.all([videoPromise, cardPromise]);
+    _computeChainRevealDelay(entry, orderIndex) {
+      const hasCustomDelay = typeof entry?.data?.revealTime === "number";
+      const baseDelay = hasCustomDelay ? Math.max(0, entry.data.revealTime) : Math.max(0, CONFIG.CARD_REVEAL_DELAY_MS);
+      const openingStagger = Math.max(0, Number(CONFIG.OPENING_STAGGER_MS ?? CONFIG.CARD_STAGGER_MS) || 0);
+      const staggerDelay = Math.max(0, (Number(orderIndex) || 0) * openingStagger);
+      return baseDelay + staggerDelay;
     }
 
     async _playStageVideo(entry, stageName, delayMs, holdFinalFrame) {
@@ -835,27 +904,30 @@
       entry.cardRig.dataset.layer = layer;
     }
 
-    async _animateCard(entry, revealDelay, openingVideo) {
-      if (openingVideo) {
+    async _animateCard(entry, revealDelay, openingVideo, options = {}) {
+      const skipVideoGate = Boolean(options.skipVideoGate);
+      const normalizedDelay = Math.max(0, typeof revealDelay === "number" ? revealDelay : 0);
+      const shouldDelayAfterGate = skipVideoGate || !openingVideo;
+      if (!skipVideoGate && openingVideo) {
         await waitForVideoStart(openingVideo, CONFIG.MEDIA_START_TIMEOUT_MS);
         if (CONFIG.STAGE_HANDOFF_DELAY_MS > 0) {
           await sleep(CONFIG.STAGE_HANDOFF_DELAY_MS);
         }
         const revealProgress = clamp(CONFIG.OPENING_REVEAL_PROGRESS, 0.05, 0.95);
-        const revealTimeout = Math.max(
-          CONFIG.OPENING_REVEAL_TIMEOUT_MS,
-          typeof revealDelay === "number" ? revealDelay : 0,
-        );
-        const hitProgress = await waitForVideoProgress(openingVideo, revealProgress, revealTimeout);
-        if (!hitProgress && revealDelay > 0) {
-          await sleep(revealDelay);
+        const revealTimeout = Math.max(CONFIG.OPENING_REVEAL_TIMEOUT_MS, normalizedDelay);
+        const durationReady = await waitForVideoDuration(openingVideo, CONFIG.MEDIA_START_TIMEOUT_MS);
+        const hitProgress = durationReady
+          ? await waitForVideoProgress(openingVideo, revealProgress, revealTimeout)
+          : false;
+        if (!hitProgress && normalizedDelay > 0) {
+          await sleep(normalizedDelay);
         }
       }
       if (CONFIG.OPENING_PROMOTION_DELAY_MS > 0) {
         await sleep(CONFIG.OPENING_PROMOTION_DELAY_MS);
       }
-      if (!openingVideo && revealDelay > 0) {
-        await sleep(revealDelay);
+      if (shouldDelayAfterGate && normalizedDelay > 0) {
+        await sleep(normalizedDelay);
       }
       entry.cardRig.classList.remove("is-hidden");
       this._setCardLayer(entry, "front");
@@ -863,7 +935,29 @@
         await sleep(CONFIG.SILHOUETTE_DELAY_MS);
       }
       await this._tweenCard(entry);
+      await this._popBadge(entry);
       await this._animateLevel(entry);
+    }
+
+    async _popBadge(entry) {
+      const badgeRoot = entry?.badge?.root;
+      if (!badgeRoot || badgeRoot.dataset.popComplete === "1") {
+        return;
+      }
+      badgeRoot.dataset.popComplete = "1";
+      badgeRoot.classList.add("is-visible");
+      badgeRoot.classList.remove("is-stealthed");
+      const overshootScale = 1.2;
+      const settleScale = 1;
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => {
+          badgeRoot.style.setProperty("--badge-scale", overshootScale.toFixed(2));
+          resolve();
+        }),
+      );
+      await sleep(130);
+      badgeRoot.style.setProperty("--badge-scale", settleScale.toFixed(3));
+      await sleep(90);
     }
 
     _tweenCard(entry) {
@@ -1184,6 +1278,41 @@
     });
   }
 
+  function waitForVideoDuration(video, timeout) {
+    return new Promise((resolve) => {
+      if (!video) {
+        resolve(false);
+        return;
+      }
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        resolve(true);
+        return;
+      }
+      let timer = null;
+      const cleanup = () => {
+        video.removeEventListener("loadedmetadata", onMetadata);
+        video.removeEventListener("durationchange", onMetadata);
+        if (timer) {
+          clearTimeout(timer);
+        }
+      };
+      const onMetadata = () => {
+        if (Number.isFinite(video.duration) && video.duration > 0) {
+          cleanup();
+          resolve(true);
+        }
+      };
+      video.addEventListener("loadedmetadata", onMetadata, { once: true });
+      video.addEventListener("durationchange", onMetadata);
+      if (timeout > 0) {
+        timer = setTimeout(() => {
+          cleanup();
+          resolve(false);
+        }, timeout);
+      }
+    });
+  }
+
   function waitForVideoEnd(video, timeout) {
     return new Promise((resolve) => {
       if (!video) {
@@ -1219,11 +1348,15 @@
       }
       const target = clamp(ratio, 0, 0.99);
       let timer = null;
+      let poller = null;
       const cleanup = () => {
         video.removeEventListener("timeupdate", onUpdate);
         video.removeEventListener("ended", onEnded);
         if (timer) {
           clearTimeout(timer);
+        }
+        if (poller) {
+          clearInterval(poller);
         }
       };
       const checkProgress = () => {
@@ -1248,11 +1381,14 @@
       };
       video.addEventListener("timeupdate", onUpdate);
       video.addEventListener("ended", onEnded, { once: true });
-      if (!checkProgress() && timeout > 0) {
-        timer = setTimeout(() => {
-          cleanup();
-          resolve(false);
-        }, timeout);
+      if (!checkProgress()) {
+        poller = setInterval(checkProgress, 33);
+        if (timeout > 0) {
+          timer = setTimeout(() => {
+            cleanup();
+            resolve(false);
+          }, timeout);
+        }
       }
     });
   }
