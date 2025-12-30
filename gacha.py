@@ -311,8 +311,12 @@ class Gacha():
     
     async def _calculate_shiny_chance(self, set_level: int, completed_set: bool) -> bool:
         """Calculates the shiny chance based on the user's set level and completion status."""
-        times_to_roll = set_level // 2 + 1  #1 roll plus one extra roll for every 3 levels
-        if set_level == 99:
+        try:
+            normalized_level = int(set_level)
+        except (TypeError, ValueError):
+            normalized_level = 0
+        times_to_roll = normalized_level // 2 + 1  #1 roll plus one extra roll for every 3 levels
+        if normalized_level >= 99:
             times_to_roll += 5  #5 extra rolls at max level
         if completed_set:
             times_to_roll += 10  #10 extra rolls for completing the set
