@@ -470,6 +470,17 @@ async def test_gacha_bits_cheer() -> SimpleNamespace:
     )
 
 
+async def test_gacha_fixed_six_pull() -> SimpleNamespace:
+    """Simulate a cheer that always awards exactly six gacha pulls (3,000 bits)."""
+    fixed_bits = 3000
+    return await _invoke_listener(
+        "event_cheer",
+        PayloadFactory.channel_cheer,
+        bits=fixed_bits,
+        message=_fake_message("Gacha six-pull test: 3,000 bits!"),
+    )
+
+
 async def test_suspicious_user_message(**overrides: Any) -> SimpleNamespace:
     return await _invoke_listener(
         "event_suspicious_user_message", PayloadFactory.suspicious_user_message, **overrides

@@ -137,6 +137,7 @@ TESTING_BUTTON_GROUPS = [
         [
             ("Gacha Pull Redemption", testing.test_gacha_pull_redemption),
             ("Random Bits Donation", testing.test_gacha_bits_cheer),
+            ("Trigger 6 Multi-Pull", testing.test_gacha_fixed_six_pull),
         ],
     ),
     (
