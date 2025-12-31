@@ -1,16 +1,27 @@
 from db import DATABASE, get_setting, get_prompt, get_hotkey
 from audio_player import AudioManager
 from message_scheduler import MessageScheduler
-from tts import ElevenLabsManager, SpeechToTextManager
-from obs_websockets import OBSWebsocketsManager
+from tts import ElevenLabsManager, SpeechToTextManager, TTSConversionResult
+from obs_websockets import OBSWebsocketsManager, SUBTITLE_UPDATE_MODE
 from openai_chat import OpenAiManager
 from tools import get_reference, set_reference, debug_print, path_from_app_root
+from PIL import ImageGrab
 import random
 import math
 import asyncio
 import time
 import threading
+import textwrap
+import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+try:
+    import requests
+except Exception:  # pragma: no cover - fallback for environments without requests
+    requests = None
+
+load_dotenv()
 
 class AssistantManager():
     def __init__(self):
@@ -28,6 +39,7 @@ class AssistantManager():
         self.twitch_bot = get_reference("TwitchBot")
         self.handler = get_reference("CommandHandler")
         self.emotes = ['moddipOp', 'moddipLeave', 'moddipNUwUke', 'moddipCAT', 'moddipSlep', 'moddipUwU' ,'moddipGUN', 'moddipRage', 'moddipBlush', 'moddipHypers', 'moddipAlert', 'moddipRIP', 'moddipLOwOsion' ,'moddipOut', 'moddipJudge', 'moddipAYAYA', 'moddipSad', 'moddipS', 'moddipOggers', 'moddipWTF']
+        self.latest_tts_result: TTSConversionResult | None = None
         self._ensure_models_loaded()
         debug_print("Assistant", "AssistantManager initialized.")
 
@@ -84,15 +96,14 @@ class AssistantManager():
         screenshot_part = f"Description of whats currently on stream (single-frame): {screenshot_result}" if screenshot_result else ""
         prompt = {"role": "user", "content": f"Twitch Chat Messages:\n{messages_str}\n\nTwitch Stream Context: The game currently being played is {game}.\n{speech_part}\n{screenshot_part}."}
         response_prompt = await get_prompt("Message Response Prompt")
-        prompts = [{"role": "system", "content": response_prompt}, prompt]
-        chatGPT = asyncio.to_thread(gpt_manager.chat, prompts, use_twitch_emotes=True)
+        chatGPT = asyncio.to_thread(gpt_manager.handle_chat, {"role": "system", "content": response_prompt}, prompt, use_twitch_emotes=True)
         response = await chatGPT
         #Normalize emotes
-        response_words = response.split()
+        response_words = response.lower().split()
         for i, word in enumerate(response_words):
-            if word.lower().startswith("moddip"):
+            if word.startswith("moddip"):
                 for emote in self.emotes:
-                    if word.lower() == emote.lower():
+                    if word == emote.lower():
                         response_words[i] = emote
         response = " ".join(response_words)
         await self.twitch_bot.send_chat(response)
@@ -101,10 +112,9 @@ class AssistantManager():
         """Generates a general response from chatgpt based on a prompt"""
         debug_print("Assistant", f"Generating general response with prompt: {prompt}")
         welcome_prompt = {"role": "user", "content": await get_prompt("Welcome First Chatter")}
-        prompts = [welcome_prompt, {"role": "user", "content": prompt}]
-        chatGPT = asyncio.to_thread(gpt_manager.chat, prompts, use_twitch_emotes=True)
+        chatGPT = asyncio.to_thread(gpt_manager.handle_chat, welcome_prompt, {"role": "user", "content": prompt}, use_twitch_emotes=True)
         response = await chatGPT
-        return response
+        return response.lower()
     
     async def listen_and_respond(self) -> None:
         """Listens to microphone input and generates a response"""
@@ -119,8 +129,7 @@ class AssistantManager():
         debug_print("Assistant", f"You said: {mic_result}")
         prompt_text = await get_prompt("Respond to Streamer")
         prompt = {"role": "system", "content": prompt_text}
-        prompts = [prompt, {"role": "user", "content": f"ModdiPly: {mic_result}"}]
-        chatGPT = asyncio.to_thread(gpt_manager.chat, prompts)
+        chatGPT = asyncio.to_thread(gpt_manager.handle_chat, prompt, {"role": "user", "content": f"ModdiPly: {mic_result}"})
         response = await chatGPT
         output = await self.tts(response)
         await self.assistant_responds(output)
@@ -166,8 +175,7 @@ class AssistantManager():
         else:
             recent_messages_str = "\n".join([f"{msg['user']}: {msg['message']}" for msg in recent_messages])
         summary_prompt = {"role": "system", "content": summary_prompt}
-        prompts = [summary_prompt, {"role": "user", "content": "Recent Messages:\n" + recent_messages_str}]
-        chatGPT = asyncio.to_thread(gpt_manager.chat, prompts)
+        chatGPT = asyncio.to_thread(gpt_manager.handle_chat, summary_prompt, {"role": "user", "content": "Recent Messages:\n" + recent_messages_str})
         response = await chatGPT
         debug_print("Assistant",f"Chat Summary: {response}")
         output = await self.tts(response)
@@ -217,17 +225,16 @@ class AssistantManager():
                 resub = {"role": "system", "content": prompt_text.replace(f"%rng%", str(random_number))}
             if text:
                 if streak > 1:
-                    prompt_2 = {"role": "system", "content": f"{user_name} resubscribed for {streak} months in a row for a total of {cumulative} months! Tier {tier} with message: {text}"}
+                    prompt_2 = {"role": "user", "content": f"{user_name} resubscribed for {streak} months in a row for a total of {cumulative} months! Tier {tier} with message: {text}"}
                 else:
-                    prompt_2 = {"role": "system", "content": f"{user_name} resubscribed for {cumulative} months! Tier {tier} with message: {text}"}
+                    prompt_2 = {"role": "user", "content": f"{user_name} resubscribed for {cumulative} months! Tier {tier} with message: {text}"}
             else:
                 if streak > 1:
-                    prompt_2 = {"role": "system", "content": f"{user_name} resubscribed for {streak} months in a row for a total of {cumulative} months! Tier {tier}!"}
+                    prompt_2 = {"role": "user", "content": f"{user_name} resubscribed for {streak} months in a row for a total of {cumulative} months! Tier {tier}!"}
                 else:
-                    prompt_2 = {"role": "system", "content": f"{user_name} resubscribed for {cumulative} months! Tier {tier}!"}
+                    prompt_2 = {"role": "user", "content": f"{user_name} resubscribed for {cumulative} months! Tier {tier}!"}
 
-            full_prompt = [resub, prompt_2]
-            chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt)
+            chatGPT = asyncio.to_thread(gpt_manager.handle_chat, resub, prompt_2)
 
             response = await chatGPT
             if text:
@@ -236,7 +243,7 @@ class AssistantManager():
                 full_response = f"{response}"
 
             output = await self.tts(full_response)
-            audio_meta = await self._build_audio_metadata(output)
+            audio_meta = await self._build_audio_metadata(output, subtitle_result=self.latest_tts_result)
 
             queued_event = {
                 "type": "resub",
@@ -295,11 +302,10 @@ class AssistantManager():
                 prompt_2 = {"role": "user", "content": f"{gifter_str} gifted {total} sub{f"s" if total > 1 else ""} to: {recipients_str}."}
 
             gifted_prompt = await get_prompt("Gifted Sub")
-            full_prompt = [{"role": "system", "content": gifted_prompt}, prompt_2]
-            chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt)
+            chatGPT = asyncio.to_thread(gpt_manager.handle_chat, {"role": "system", "content": gifted_prompt}, prompt_2)
             response = await chatGPT
             output = await self.tts(response)
-            audio_meta = await self._build_audio_metadata(output)
+            audio_meta = await self._build_audio_metadata(output, subtitle_result=self.latest_tts_result)
 
             queued_event = {
                 "type": "gifted",
@@ -319,11 +325,10 @@ class AssistantManager():
             viewer_count = payload.viewer_count
             raider_name = payload.from_broadcaster.display_name
             prompt_2 = {"role": "user", "content": f"{event["user"]} has raided with {viewer_count} viewers!{f" Last seen playing {game_name}!" if game_name else ""}"}
-            full_prompt = [{"role": "system", "content": raid_prompt}, prompt_2]
-            chatGPT = asyncio.to_thread(gpt_manager.chat, full_prompt)
+            chatGPT = asyncio.to_thread(gpt_manager.handle_chat, {"role": "system", "content": raid_prompt}, prompt_2)
             response = await chatGPT
             output = await self.tts(response)
-            audio_meta = await self._build_audio_metadata(output)
+            audio_meta = await self._build_audio_metadata(output, subtitle_result=self.latest_tts_result)
 
             queued_event = {
                 "type": "raid",
@@ -364,11 +369,10 @@ class AssistantManager():
             else:
                 cheer_prompt = await get_prompt("Bit Donation w/o Message")
             prompt_2 = {"role": "user", "content": f"{payload.user.display_name} has cheered {bits} bits!{f' They said: {payload.message}' if payload.message else ''}"}
-            full_prompt = [{"role": "system", "content": cheer_prompt}, prompt_2]
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, full_prompt)
+            chatGPT = asyncio.to_thread(self.chatGPT.handle_chat, {"role": "system", "content": cheer_prompt}, prompt_2)
             response = await chatGPT
             output = await self.tts(response)
-            audio_meta = await self._build_audio_metadata(output)
+            audio_meta = await self._build_audio_metadata(output, subtitle_result=self.latest_tts_result)
             queued_event = {
                 "type": "cheer",
                 "audio": output,
@@ -379,15 +383,23 @@ class AssistantManager():
             self.event_manager.add_event(queued_event)
             return
         
-    async def tts(self, response: str) -> str:
+    async def tts(self, response: str) -> str | None:
         """Converts text to speech and returns the file path"""
         debug_print("Assistant", f"Converting response to speech: {response}")
         voice = await get_setting("Elevenlabs Voice ID")
         model = await get_setting("Elevenlabs Synthesizer Model")
-        output = self.elevenlabs.text_to_audio(response, voice=voice, model=model)
+        tts_result = self.elevenlabs.text_to_audio(response, voice=voice, model=model)
+        if tts_result:
+            self.latest_tts_result = tts_result
+            output = tts_result.path
+        else:
+            self.latest_tts_result = None
+            output = None
         if not output:
             voice = await get_setting("Azure TTS Backup Voice")
             output = self.azure.text_to_speech(response, voice=voice)
+        if not output:
+            return None
         return output
     
     async def set_assistant_names(self) -> None:
@@ -396,10 +408,31 @@ class AssistantManager():
         self.assistant_name = await get_setting("OBS Assistant Object Name")
         self.stationary_assistant_name = await get_setting("OBS Assistant Stationary Object Name")
 
-    async def _build_audio_metadata(self, audio_path: str) -> dict:
+    async def _build_audio_metadata(self, audio_path: str, subtitle_result: TTSConversionResult | dict | None = None) -> dict:
         """Pre-process audio so queued events already have bounce metadata."""
+
+        def _attach_subtitle_metadata(metadata: dict) -> dict:
+            if not subtitle_result:
+                return metadata
+            subtitle_payload = None
+            if isinstance(subtitle_result, TTSConversionResult):
+                subtitle_payload = subtitle_result.to_dict()
+            elif isinstance(subtitle_result, dict):
+                subtitle_payload = dict(subtitle_result)
+            if subtitle_payload:
+                subtitle_payload.setdefault("path", audio_path)
+                metadata["subtitle_result"] = subtitle_payload
+            return metadata
+
         if not audio_path:
-            return {"path": audio_path, "volumes": [], "min_volume": 0, "max_volume": 0, "duration_ms": 0}
+            return _attach_subtitle_metadata({
+                "path": audio_path,
+                "volumes": [],
+                "min_volume": 0,
+                "max_volume": 0,
+                "duration_ms": 0,
+            })
+
         debug_print("Assistant", f"Preprocessing audio for event queue: {audio_path}")
         volumes: list = []
         total_duration_ms = 0
@@ -409,13 +442,13 @@ class AssistantManager():
             print(f"process_audio failed during preprocessing: {e}")
         min_vol = min(volumes) if volumes else 0
         max_vol = max(volumes) if volumes else 0
-        return {
+        return _attach_subtitle_metadata({
             "path": audio_path,
             "volumes": volumes,
             "min_volume": min_vol,
             "max_volume": max_vol,
             "duration_ms": total_duration_ms,
-        }
+        })
 
     async def _resolve_tts_volume(self, audio_source: str | dict | None) -> int:
         """Determine playback volume (0-100) for generated TTS based on filename prefix."""
@@ -464,7 +497,7 @@ class AssistantManager():
     
     async def assistant_responds(self, output):
         """Converts output audio into y values and then plays the audio while bouncing the assistant"""
-        debug_print("Assistant", f"Assistant responding with audio output: {output}")
+        debug_print("Assistant", f"Assistant responding")
         if not self.obs:
             self.obs = get_reference("OBSManager")
         if not self.obs.onscreen_location:
@@ -479,6 +512,30 @@ class AssistantManager():
             debug_print("Assistant", "No audio path supplied to assistant_responds; aborting playback.")
             return
         playback_volume = await self._resolve_tts_volume(payload or audio_path)
+        subtitle_task = None
+        subtitle_result = None
+        subtitle_from_payload = False
+        if payload:
+            raw_subtitles = payload.get("subtitle_result")
+            if isinstance(raw_subtitles, TTSConversionResult):
+                subtitle_result = raw_subtitles
+                subtitle_from_payload = True
+            elif isinstance(raw_subtitles, dict):
+                subtitle_result = TTSConversionResult.from_dict(raw_subtitles)
+                subtitle_from_payload = subtitle_result is not None
+        if subtitle_result is None and self.latest_tts_result and self.latest_tts_result.path:
+            try:
+                audio_target = Path(audio_path).resolve()
+                tts_target = Path(self.latest_tts_result.path).resolve()
+                if audio_target == tts_target:
+                    subtitle_result = self.latest_tts_result
+            except Exception:
+                subtitle_result = self.latest_tts_result
+        if subtitle_result and payload is not None and not subtitle_from_payload:
+            payload["subtitle_result"] = subtitle_result.to_dict()
+        self.latest_tts_result = None
+        if subtitle_result is None:
+            await self.obs.clear_subtitles()
         bounce_task = None
         original_transform = None
         cleaned_up = False
@@ -540,6 +597,11 @@ class AssistantManager():
                 except Exception:
                     print("Audio warmup did not complete in time; continuing.")
 
+            if subtitle_result:
+                subtitle_task = asyncio.create_task(
+                    self.obs.run_subtitle_track(subtitle_result, SUBTITLE_UPDATE_MODE)
+                )
+
             bounce_task = asyncio.create_task(
                 self.obs.bounce_while_talking(
                     audio_manager,
@@ -572,6 +634,8 @@ class AssistantManager():
             )
 
             await bounce_task
+            if subtitle_task:
+                await subtitle_task
 
             await asyncio.sleep(0.2)
             await self.obs.deactivate_assistant(self.assistant_name)
@@ -584,6 +648,8 @@ class AssistantManager():
                     bounce_task.cancel()
             except Exception:
                 pass
+            if subtitle_task is not None:
+                subtitle_task.cancel()
             if 'original_transform' in locals() and original_transform:
                 await self.obs.deactivate_assistant(self.stationary_assistant_name, True, original_transform)
             else:
@@ -596,6 +662,11 @@ class AssistantManager():
             if bounce_task is not None:
                 try:
                     bounce_task.cancel()
+                except Exception:
+                    pass
+            if subtitle_task is not None:
+                try:
+                    subtitle_task.cancel()
                 except Exception:
                     pass
             try:
@@ -616,6 +687,124 @@ class AssistantManager():
                     await self.obs.deactivate_assistant(self.assistant_name)
                 except Exception:
                     pass
+            if subtitle_task and not subtitle_task.done():
+                subtitle_task.cancel()
+
+    def search_web(self, search_phrase: str) -> str:
+        """Search Google (via the Custom Search JSON API) and summarize the top matches."""
+        debug_print("Assistant", f"Searching google: {search_phrase}")
+        query = (search_phrase or "").strip()
+        if not query:
+            return "SEARCH_WEB: No search phrase provided."
+
+        api_key = os.getenv("GOOGLE_API_KEY")
+        search_engine_id = os.getenv("GOOGLE_ENGINE_ID")
+        if not api_key or not search_engine_id:
+            return (
+                "SEARCH_WEB: Google search is not configured."
+                " Please set both 'Google Search API Key' and 'Google Search Engine ID'."
+            )
+
+        if requests is None:
+            return "SEARCH_WEB: Python 'requests' package is unavailable."
+
+        try:
+            payload = self._perform_google_search(api_key, search_engine_id, query, 5)
+        except Exception as exc:
+            return f"SEARCH_WEB: Failed to fetch Google results ({exc})."
+
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not items:
+            return f"SEARCH_WEB: No Google results found for '{query}'."
+
+        search_info = payload.get("searchInformation") if isinstance(payload, dict) else None
+        return self._summarize_search_results(query, items, search_info)
+
+    def _perform_google_search(self, api_key: str, search_engine_id: str, query: str, num_results: int) -> dict:
+        params = {
+            "key": api_key,
+            "cx": search_engine_id,
+            "q": query,
+            "num": max(1, min(num_results, 10)),
+        }
+        response = requests.get(
+            "https://www.googleapis.com/customsearch/v1",
+            params=params,
+            timeout=10,
+        )
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            detail = self._format_google_error(response, query)
+            raise RuntimeError(detail) from exc
+        return response.json()
+
+    def _format_google_error(self, response, query: str) -> str:
+        status = getattr(response, "status_code", "unknown")
+        body = None
+        try:
+            body = response.json()
+        except Exception:
+            body = response.text if hasattr(response, "text") else ""
+        if isinstance(body, dict):
+            error_obj = body.get("error") or {}
+            message = error_obj.get("message") or body.get("message")
+        else:
+            message = body
+        base = f"Google Custom Search API returned HTTP {status} while querying '{query}'."
+        if message:
+            base += f" Details: {message}"
+        return base
+
+    def _summarize_search_results(self, query: str, items: list[dict], search_info: dict | None) -> str:
+        lines = [f"Google search summary for '{query}':"]
+        for index, item in enumerate(items[:5], start=1):
+            title = (item.get("title") or "Untitled").strip()
+            snippet = (item.get("snippet") or item.get("htmlSnippet") or "").strip()
+            snippet = " ".join(snippet.split())
+            if snippet:
+                snippet = textwrap.shorten(snippet, width=220, placeholder="…")
+            link = item.get("link") or item.get("formattedUrl") or ""
+            if link:
+                snippet = f"{snippet} (Source: {link})" if snippet else f"Source: {link}"
+            summary_line = f"{index}. {title}"
+            if snippet:
+                summary_line += f" — {snippet}"
+            lines.append(summary_line)
+
+        if search_info and search_info.get("totalResults"):
+            lines.append(f"Approximate total results: {search_info['totalResults']}")
+
+        return "\n".join(lines)
+
+    def screenshot_desktop(self):
+        """Tool to be utilized by the AI to take a screenshot of the desktop and return a description."""
+        debug_print("Assistant", "Taking desktop screenshot for analysis.")
+        screenshot = ImageGrab.grab()
+        path = path_from_app_root("media/screenshots/desktop_screenshot.png")
+        screenshot.save(path)
+        screenshot.close()
+        if not self.gpt_manager:
+            self.gpt_manager = get_reference("GPTManager")
+        description = self.gpt_manager.analyze_image(path)
+        return description
+
+    def screenshot_stream(self):
+        """Tool to be utilized by the AI to take a screenshot of the stream using OBS and return a description."""
+        debug_print("Assistant", "Taking stream screenshot for analysis.")
+        if not self.obs:
+            self.obs = get_reference("OBSManager")
+        path = path_from_app_root("media/screenshots/stream_screenshot.png")
+        new_path = self.obs.get_obs_screenshot(path)
+        if not self.gpt_manager:
+            self.gpt_manager = get_reference("GPTManager")
+        description = self.gpt_manager.analyze_image(new_path)
+        return description
+
+    def query_long_term_memory(self, query: str) -> str:
+        """Tool to be utilized by the AI to query long term memory database."""
+        debug_print("Assistant", f"Querying long term memory with query: {query}")
+        #Unused
 
 class ResponseTimer():
     def __init__(self):
@@ -1213,32 +1402,8 @@ async def test():
     from tools import set_debug
     await set_debug(True)
     assistant = AssistantManager()
-    assistant.audio_manager = AudioManager()
-    assistant.obs = OBSWebsocketsManager()
-    assistant.elevenlabs = ElevenLabsManager()
-    assistant.azure = SpeechToTextManager()
-    #Set up database so settings can be fetched
-    import os
-    BOT_ID: str = os.getenv("BOT_ID", "").strip()
-    data_dir = path_from_app_root("data")
-    os.makedirs(data_dir, exist_ok=True)
-    db_path = str(data_dir / "maddieply.db")
-    import asqlite
-    from db import setup_database
-    # Create the database pool and keep it open for the duration of the test.
-    tdb = await asqlite.create_pool(db_path)
-    try:
-        await setup_database(tdb, bot_id=BOT_ID)
-        # Allow code that depends on the global DATABASE (set by setup_database)
-        # to run while the pool remains open.
-        voice_path = await assistant.tts("Hello, this is a test of the text to speech system. Please inform me if you received these instructions.")
-        await assistant.assistant_responds(voice_path)
-    finally:
-        try:
-            # Close the pool when done
-            await tdb.close()
-        except Exception:
-            pass
+    answer = assistant.search_web("What is the capital of France?")
+    print(answer)
 
 if __name__ == "__main__":
     asyncio.run(test())

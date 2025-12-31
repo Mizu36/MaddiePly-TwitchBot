@@ -746,7 +746,11 @@ class CustomPointRedemptionBuilder():
         audio_meta = None
         if assistant:
             try:
-                audio_meta = await assistant._build_audio_metadata(audio_path)
+                subtitle_seed = getattr(assistant, "latest_tts_result", None)
+                audio_meta = await assistant._build_audio_metadata(
+                    audio_path,
+                    subtitle_result=subtitle_seed,
+                )
             except Exception:
                 audio_meta = None
         if not audio_meta:
@@ -927,6 +931,7 @@ class CustomPointRedemptionBuilder():
         if not self.online_database:
             self.online_database = get_reference("OnlineDatabase")
         await self.online_database.increment_column(table="users", column_filter="twitch_id", value=payload.user.id, column_to_increment="bits_donated", increment_by=bits)
+        number_of_rolls = 0
         if bits >= 500:
             number_of_rolls = bits // 500
         if not self.gacha_handler:
@@ -937,8 +942,9 @@ class CustomPointRedemptionBuilder():
             data = {"twitch_username": payload.user.name, "twitch_display_name": payload.user.display_name, "active_gacha_set": "humble beginnings"}
             await self.online_database.create_user(user_id, data)
         if await get_setting("Gacha System Enabled", False):
-            if self.gacha_handler:
-                gacha_task = asyncio.create_task(self.gacha_handler.roll_for_gacha(payload.user.id, number_of_rolls, bits_toward_next_pull=bits % 500))
+            if number_of_rolls > 0:
+                if self.gacha_handler:
+                    gacha_task = asyncio.create_task(self.gacha_handler.roll_for_gacha(payload.user.id, number_of_rolls, bits_toward_next_pull=bits % 500))
         if not self.online_database:
             self.online_database = get_reference("OnlineDatabase")
         user_data = await self.online_database.get_specific_user_data(twitch_user_id=user_id, field="bits_donated")
@@ -1381,7 +1387,8 @@ class CustomPointRedemptionBuilder():
             voice = await get_setting("Elevenlabs Voice ID", None)
             if not self.elevenlabs_manager:
                 self.elevenlabs_manager = get_reference("ElevenLabsManager")
-            output = self.elevenlabs_manager.text_to_audio(input_text=text, voice=voice)
+            result = self.elevenlabs_manager.text_to_audio(input_text=text, voice=voice)
+            output = result.path if result else None
             if not output:
                 if not self.azure_manager:
                     self.azure_manager = get_reference("SpeechToTextManager")
@@ -1442,7 +1449,7 @@ class CustomPointRedemptionBuilder():
         if cache is None:
             if not self.chatGPT:
                 self.chatGPT = get_reference("GPTManager")
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, [{"role": "user", "content": prompt}])
+            chatGPT = asyncio.to_thread(self.chatGPT.handle_chat, None, {"role": "user", "content": prompt}, use_personality = False)
             response = await chatGPT
             if not response:
                 print("Failed to generate text response.")
@@ -1472,10 +1479,9 @@ class CustomPointRedemptionBuilder():
         debug_print("CustomBuilder", "Generating AI voiced response with personality...")
         cache = self._get_cached_asset(event, cache_key)
         if cache is None:
-            full_prompt = [{"role": "user", "content": prompt}]
             if not self.chatGPT:
                 self.chatGPT = get_reference("GPTManager")
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, full_prompt)
+            chatGPT = asyncio.to_thread(self.chatGPT.handle_chat, None, {"role": "user", "content": prompt})
             response = await chatGPT
             if not response:
                 print("Failed to generate text response.")
@@ -1513,7 +1519,7 @@ class CustomPointRedemptionBuilder():
         if cache is None:
             if not self.chatGPT:
                 self.chatGPT = get_reference("GPTManager")
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, [{"role": "user", "content": prompt}])
+            chatGPT = asyncio.to_thread(self.chatGPT.handle_chat, None, {"role": "user", "content": prompt}, use_personality = False)
             response = await chatGPT
             if not response:
                 return None
@@ -1537,10 +1543,9 @@ class CustomPointRedemptionBuilder():
         debug_print("CustomBuilder", f"Generating AI chat response with personality for: {prompt}")
         cache = self._get_cached_asset(event, cache_key)
         if cache is None:
-            full_prompt = [{"role": "user", "content": prompt}]
             if not self.chatGPT:
                 self.chatGPT = get_reference("GPTManager")
-            chatGPT = asyncio.to_thread(self.chatGPT.chat, full_prompt, use_twitch_emotes=True)
+            chatGPT = asyncio.to_thread(self.chatGPT.handle_chat, None, {"role": "user", "content": prompt}, use_twitch_emotes=True)
             response = await chatGPT
             if not response:
                 return None

@@ -5,8 +5,10 @@ import base64
 import mimetypes
 import asyncio
 import threading
+import json
+import re
 from dotenv import load_dotenv
-from tools import debug_print
+from tools import debug_print, get_reference
 from db import get_prompt, get_setting
 
 load_dotenv()
@@ -79,12 +81,14 @@ class OpenAiManager:
         self.default_model = None
         self.fine_tune_model = None
         self.bot_detector_model = None
+        self.assistant = get_reference("AssistantManager")
         try:
             self.client = OpenAI(api_key = API_KEY)
         except TypeError:
             exit("[ERROR]Ooops! You forgot to set OPENAI_API_KEY in your environment!")
         debug_print("OpenAIManager", "OpenAI Manager initialized.")
         self.memory_summarization_prompt = {"role": "system", "content": "TASK: Summarize recent interactions into long-term memory for MaddiePly.\n\nYou are NOT responding to chat.\nYou are converting raw conversation and events into structured memory.\n\nIMPORTANT CONSTRAINTS:\n- Do NOT write dialogue.\n- Do NOT include quotes.\n- Do NOT roleplay or add personality flair.\n- Do NOT invent facts.\n- Do NOT include formatting rules or instructions.\n- Write in neutral, factual language only.\n\nMEMORY MUST:\n- Contain only information useful for future interactions.\n- Preserve continuity of relationships, running jokes, and ongoing themes.\n- Exclude one-off chatter unless it became a repeated topic.\n\nCategorize information under the following sections ONLY if applicable:\n\nLORE:\n- Persistent facts about ModdCorp, MaddiePly, or internal canon established during interactions.\n\nRELATIONSHIPS:\n- Notable changes or patterns in how MaddiePly interacts with ModdiPly or chat.\n- Recurring viewers, roles, or reputations if relevant.\n\nUSER PREFERENCES:\n- Style, tone, or behavior the audience responds well or poorly to.\n- Repeated requests or corrections from ModdiPly.\nRUNNING JOKES & THEMES:\n- Repeated gags, policies, fictional projects, or terminology that reoccur.\n\nOPEN THREADS:\n- Unresolved topics, promises, or ongoing arcs likely to continue.\n\nAVOID STORING:\n- Exact wording of messages.\n- Temporary emotions.\n- Redundant restatements of personality.\n- Output formatting constraints.\n\nIf no meaningful long-term memory was created, respond with:\nNO UPDATE "}
+        self.tool_prompt = {"role": "system", "content": "TASK: Decide if a tool is required before responding.\n\nYou are NOT speaking to chat.\nYou are selecting a tool or NONE.\n\nRULES:\n- Choose ONE tool or NONE.\n- Do not explain your choice.\n- Do not roleplay.\n- Output JSON only in the exact schema provided.\n\nSchema:\n{\n  \"tool\": \"NONE | SEARCH_WEB | SCREENSHOT_DESKTOP | SCREENSHOT_STREAM\",\n  \"argument\": \"string or null\" \n}"}
         self.working_memory = ""
         self.twitch_emotes_prompt = None
 
@@ -108,17 +112,64 @@ class OpenAiManager:
         messages = [{"role": "system", "content": self.personality_prompt}, self.memory_summarization_prompt, prompt]
         try:
             completion = self.client.chat.completions.create(
-                            model="gpt-4o",
-                            messages=messages
+                            model="gpt-4o-mini",
+                            messages=messages,
+                            temperature=0.3,
+                            top_p=0.8,
+                            presence_penalty=0.0,
+                            frequency_penalty=0.0
                             )
             openai_answer = completion.choices[0].message.content
+            debug_print("OpenAIManager", f"Memory summarization response: {openai_answer}")
             if openai_answer.strip() != "NO UPDATE":
                 self.working_memory = openai_answer
         except Exception as e:
             print(f"[ERROR]Failed to get response from OpenAI for memory summarization: {e}")
             return
+        
+    def handle_chat(self, task_prompt: dict | None, context_prompt: dict, use_twitch_emotes = False, use_personality = True):
+        tool_decision = self.perform_tool_selection(context_prompt)
 
-    def chat(self, prompts: list[dict], conversational: bool = False, use_twitch_emotes: bool = False) -> str:
+        tool_result_prompt = None
+
+        if tool_decision["tool"] != "NONE":
+            tool_output = self.execute_tool(
+                tool_decision["tool"],
+                tool_decision["argument"]
+            )
+            tool_result_prompt = {
+                "role": "system",
+                "content": f"TOOL RESULT:\n{tool_output}"
+            }
+
+        prompts = []
+        if task_prompt:
+            prompts.append(task_prompt)
+        prompts.append(context_prompt)
+
+        if tool_result_prompt:
+            prompts.insert(-1, tool_result_prompt)
+
+        return self.chat(prompts, conversational=False, use_twitch_emotes=use_twitch_emotes, use_personality=use_personality)
+    
+    def execute_tool(self, tool_name: str, argument: str) -> str:
+        debug_print("OpenAIManager", f"Executing tool: {tool_name} with argument: {argument}")
+        if not self.assistant:
+            self.assistant = get_reference("AssistantManager")
+        tool_output = ""
+        if tool_name == "SEARCH_WEB":
+            tool_output = self.assistant.search_web(argument)
+        elif tool_name == "SCREENSHOT_DESKTOP":
+            tool_output = self.assistant.screenshot_desktop()
+        elif tool_name == "SCREENSHOT_STREAM":
+            tool_output = self.assistant.screenshot_stream()
+        elif tool_name == "QUERY_MEMORY":
+            pass #Unused
+        else:
+            tool_output = "[UNKNOWN TOOL]"
+        return tool_output
+
+    def chat(self, prompts: list[dict], conversational: bool = False, use_twitch_emotes: bool = False, use_personality: bool = True) -> str:
         """Asks a question to OpenAI's chat model after passing a system prompt and user prompt. Only two prompts should be passed in the list.
         If conversational is True, uses the fine-tuned model for more conversational responses."""
         debug_print("OpenAIManager", f"Asking chat question, conversational={conversational}.")
@@ -126,6 +177,21 @@ class OpenAiManager:
             print("[ERROR]Didn't receive input!")
             return
         
+        if not use_personality:
+            completion = self.client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=prompts,
+                            temperature=0.85,
+                            top_p=0.95,
+                            presence_penalty=0.3,
+                            frequency_penalty=0.2
+                            )
+            openai_answer = completion.choices[0].message.content
+            deformatted_answer = openai_answer.replace('—', ' ').strip()
+            print(f"{'MaddiePly says:\n' if use_personality else 'ChatGPT says:\n'}{openai_answer}")
+            return deformatted_answer
+        else:
+            pass
         working_memory_prompt = {"role": "system", "content": f"MEMORY (REFERENCE ONLY):\n{self.working_memory if self.working_memory else 'NONE'}"}
         prompts.insert(1, working_memory_prompt)
         messages = self.prompts + prompts
@@ -144,24 +210,72 @@ class OpenAiManager:
         try:
             completion = self.client.chat.completions.create(
                             model=model,
-                            messages=messages
+                            messages=messages,
+                            temperature=0.85,
+                            top_p=0.9
                             )
         except Exception:
             try:
                 completion = self.client.chat.completions.create(
                     model="gpt-4o",
-                    messages=messages
+                    messages=messages,
+                    temperature=0.85,
+                    top_p=0.9
                     )
             except Exception as e:
                 print(f"[ERROR]Failed to get response from OpenAI: {e}")
                 return
         openai_answer = completion.choices[0].message.content
-        deformatted_answer = openai_answer.lower().replace('—', ' ').strip()
+        deformatted_answer = openai_answer.replace('—', ' ').strip()
         user_input_prompt = prompts[-1]["content"]
         recent_interaction = f"{user_input_prompt}\nMaddiePly's Response: {openai_answer}"
         self._schedule_memory_summary(recent_interaction)
         debug_print("OpenAIManager", f"{openai_answer}")
         return deformatted_answer
+    
+    def perform_tool_selection(self, context_prompt: dict) -> dict:
+        """Asks the tool selection prompt to OpenAI's chat model to determine if a tool is needed."""
+        debug_print("OpenAIManager", f"Asking tool selection question.")
+        messages = [
+            {
+                "role": "system",
+                "content": "You are selecting tools. You are not responding to chat."
+            },
+            {
+                "role": "system",
+                "content": f"CURRENT MEMORY:\n{self.working_memory if self.working_memory else 'NONE'}"
+            },
+            context_prompt,
+            self.tool_prompt
+        ]
+        print("Asking ChatGPT for tool selection...")
+        # Process the answer
+        try:
+            completion = self.client.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=messages,
+                            temperature=0.0,
+                            top_p=1.0,
+                            presence_penalty=0.0,
+                            frequency_penalty=0.0
+                            )
+        except Exception:
+            try:
+                completion = self.client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=messages,
+                    temperature=0.0,
+                    top_p=1.0,
+                    presence_penalty=0.0,
+                    frequency_penalty=0.0
+                    )
+            except Exception as e:
+                print(f"[ERROR]Failed to get response from OpenAI: {e}")
+                return {"tool": "NONE", "argument": None}
+        openai_answer = completion.choices[0].message.content
+        debug_print("OpenAIManager", f"Tool selection response: {openai_answer}")
+        parsed = self._parse_tool_response(openai_answer)
+        return parsed if parsed else {"tool": "NONE", "argument": None}
 
     def _schedule_memory_summary(self, recent_interaction: str) -> None:
         try:
@@ -303,11 +417,28 @@ class OpenAiManager:
         debug_print("OpenAIManager", "Fetching available OpenAI models.")
         return ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro", "gpt-5.1", "o3", "o3-mini", "o4-mini"]
     
+    def _parse_tool_response(self, response: str | None) -> dict | None:
+        if not response:
+            return None
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```[a-zA-Z0-9]*\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        candidate = cleaned if start == -1 or end == -1 or end < start else cleaned[start:end+1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+        # Fallback: allow single-quoted dicts
+        alt = candidate.replace("'", '"')
+        try:
+            return json.loads(alt)
+        except json.JSONDecodeError:
+            return None
+    
 
 if __name__ == "__main__":
     gpt_manager = OpenAiManager()
-    #gpt_manager.get_and_analyze_screenshot("moddiply")
-    #gpt_manager.bot_detector("Check out this cool site: bit.ly/xyz")
-    #gpt_manager.bot_detector("Hello, how are you?")
-    print(gpt_manager.chat_with_history("Hello, how are you?", conversational=True))
         
