@@ -3,14 +3,19 @@ import time
 import os
 import sys
 import asyncio
-import typing
 import obsws_python as obs
+from obsws_python.error import OBSSDKRequestError
 from PIL import Image, ImageFont
 from contextlib import contextmanager
 from audio_player import AudioManager
-from tools import debug_print, path_from_app_root
+from subtitle_overlay import SubtitleOverlayServer
+from tools import debug_print, path_from_app_root, get_debug
 from db import get_setting, get_location_capture
 from dotenv import load_dotenv
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:  # pragma: no cover - used for type hints only
+    from tts import TTSConversionResult
 
 ##########################################################
 ##########################################################
@@ -20,6 +25,56 @@ load_dotenv()
 WEBSOCKET_HOST = "localhost"
 WEBSOCKET_PORT = 4455
 WEBSOCKET_PASSWORD = os.getenv("WEBSOCKET_PASSWORD")
+
+# Subtitle overlay configuration
+SUBTITLE_UPDATE_MODE = "word"
+if SUBTITLE_UPDATE_MODE not in {"word", "character"}:
+    SUBTITLE_UPDATE_MODE = "word"
+SUBTITLE_BOX_WIDTH = 1280
+SUBTITLE_BOX_HEIGHT = 720
+SUBTITLE_MARGIN_BOTTOM = 0
+SUBTITLE_MAX_FONT_SIZE = 64
+SUBTITLE_MIN_FONT_SIZE = 28
+SUBTITLE_FONT_FACE = "Segoe UI"
+SUBTITLE_FONT_STYLE = "Bold"
+SUBTITLE_AUTO_SHRINK_THRESHOLD = 110
+SUBTITLE_NO_SPACE_BEFORE = set(",.!?;:\"”’)]}")
+SUBTITLE_OPENING_QUOTES = {"\"", "“", "„", "«"}
+SUBTITLE_LINE_FONT_STEP = 3
+SUBTITLE_LINE_SHRINK_DELAY = 3
+SUBTITLE_PYRAMID_START_RATIO = 0.95
+SUBTITLE_PYRAMID_RATIO_STEP = 0.03
+SUBTITLE_CHAR_WIDTH_RATIO = 0.42
+SUBTITLE_LINE_HEIGHT_RATIO = 1.25
+SUBTITLE_WRAP_SLACK = 48
+SUBTITLE_VERTICAL_SAFE_RATIO = 0.9
+SUBTITLE_CHAR_EQUIVALENTS = {
+    "“": "\"",
+    "”": "\"",
+    "„": "\"",
+    "«": "\"",
+    "»": "\"",
+    "‘": "'",
+    "’": "'",
+    "‚": "'",
+    "—": "-",
+    "–": "-",
+}
+SUBTITLE_FONT_CANDIDATES = (
+    os.getenv("SUBTITLE_FONT_FILE"),
+    str(path_from_app_root("media", "fonts", "subtitle.ttf")),
+    os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts", "segoeui.ttf"),
+    os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts", "arial.ttf"),
+    "/System/Library/Fonts/SFNSDisplay.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
+SUBTITLE_OVERLAY_PORT = int(os.getenv("SUBTITLE_OVERLAY_PORT", "4816"))
+SUBTITLE_BASE_CHAR_TARGET = 28
+SUBTITLE_BASE_CHAR_MAX = 33
+SUBTITLE_CHAR_GROWTH_LINE_START = 3
+SUBTITLE_CHAR_GROWTH_PER_LINE = 3
+
 
 @contextmanager
 def suppress_stderr():
@@ -54,6 +109,17 @@ class OBSWebsocketsManager:
         self.onscreen_location = None
         self.offscreen_location = None
         self.display_fade_in_seconds = self.FADE_STEPS * self.FADE_STEP_INTERVAL
+        self.video_width, self.video_height = self._load_video_settings()
+        self._subtitle_mode = SUBTITLE_UPDATE_MODE
+        self.subtitle_overlay = SubtitleOverlayServer(port=SUBTITLE_OVERLAY_PORT)
+        self._subtitle_font_path = self._resolve_subtitle_font_path()
+        self._subtitle_font_cache: Dict[int, ImageFont.FreeTypeFont] = {}
+        self._subtitle_lines: List[str] = []
+        self._subtitle_line_chars: List[int] = []
+        self._subtitle_pending_new_line: bool = False
+        self._subtitle_block_font_size: int = SUBTITLE_MAX_FONT_SIZE
+        self._subtitle_last_line_count: int = 0
+        self._pending_quote_prefix: str = ""
         debug_print("OBSWebsocketsManager", "OBSWebsocketsManager initialized.")
 
     def get_display_fade_in_delay(self) -> float:
@@ -62,6 +128,55 @@ class OBSWebsocketsManager:
             return float(self.display_fade_in_seconds)
         except Exception:
             return self.FADE_STEPS * self.FADE_STEP_INTERVAL
+    
+    def _load_video_settings(self) -> tuple[int, int]:
+        """Best effort fetch of the base canvas dimensions for subtitle placement."""
+        try:
+            resp = self.ws.send("GetVideoSettings", {})
+            width = getattr(resp, "baseWidth", None) or getattr(resp, "base_width", None)
+            height = getattr(resp, "baseHeight", None) or getattr(resp, "base_height", None)
+            if isinstance(resp, dict):
+                width = width or resp.get("baseWidth") or resp.get("base_width")
+                height = height or resp.get("baseHeight") or resp.get("base_height")
+        except Exception:
+            width = None
+            height = None
+        if not width or not height:
+            width, height = 1920, 1080
+        return int(width), int(height)
+
+    def _resolve_subtitle_font_path(self) -> Optional[str]:
+        for candidate in SUBTITLE_FONT_CANDIDATES:
+            if not candidate:
+                continue
+            try:
+                path_obj = Path(candidate)
+            except Exception:
+                continue
+            if path_obj.exists():
+                return str(path_obj)
+        return None
+
+    def _get_subtitle_font(self, font_size: int):
+        size = max(1, int(font_size))
+        cached = self._subtitle_font_cache.get(size)
+        if cached is not None:
+            return cached
+        font_path = self._subtitle_font_path
+        font = None
+        if font_path:
+            try:
+                font = ImageFont.truetype(font_path, size=size)
+            except Exception:
+                font = None
+                self._subtitle_font_path = None
+        if font is None:
+            try:
+                font = ImageFont.load_default()
+            except Exception:
+                font = None
+        self._subtitle_font_cache[size] = font
+        return font
         
     async def set_assistant_locations(self) -> bool:
         """Sets the onscreen and offscreen locations of the assistant object"""
@@ -389,6 +504,427 @@ class OBSWebsocketsManager:
                 }
             )
             
+    async def run_subtitle_track(self, tts_result: "TTSConversionResult", update_mode: Optional[str] = None) -> None:
+        """Render timed subtitles using ElevenLabs timestamp metadata."""
+        if not tts_result:
+            await self.clear_subtitles()
+            return
+        if not self.subtitle_overlay:
+            return
+        update_mode = (update_mode or self._subtitle_mode or "word").lower()
+        if update_mode not in {"word", "character"}:
+            update_mode = "word"
+        tokens = self._build_caption_schedule(tts_result, update_mode)
+        if not tokens:
+            await self.clear_subtitles()
+            return
+        start_time = time.perf_counter()
+        self._subtitle_block_font_size = SUBTITLE_MAX_FONT_SIZE
+        self._subtitle_last_line_count = 0
+        self._subtitle_lines = []
+        self._subtitle_line_chars = []
+        self._subtitle_pending_new_line = False
+        self._pending_quote_prefix = ""
+        current_text = ""
+        try:
+            for token in tokens:
+                delay = token["start"] - (time.perf_counter() - start_time)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                self._append_caption_token(token["value"], mode=update_mode, space_before=token.get("space_before"))
+                current_text = "\n".join(self._subtitle_lines)
+                payload = self._build_overlay_payload(current_text)
+                await asyncio.to_thread(self.subtitle_overlay.update_state, payload)
+            total_duration = (tts_result.duration_seconds or (tokens[-1]["start"] + 0.75)) + 2.0
+            remaining = total_duration - (time.perf_counter() - start_time)
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+        except asyncio.CancelledError:
+            await asyncio.to_thread(self.subtitle_overlay.clear_state)
+            raise
+        except Exception as exc:
+            print(f"[ERROR]Subtitle rendering failed: {exc}")
+        finally:
+            await asyncio.to_thread(self.subtitle_overlay.clear_state)
+
+    async def clear_subtitles(self) -> None:
+        """Ensure the subtitle overlay is cleared."""
+        if self.subtitle_overlay:
+            await asyncio.to_thread(self.subtitle_overlay.clear_state)
+
+    def _build_overlay_payload(self, text: str) -> Dict[str, Any]:
+        lines: List[Dict[str, Any]] = []
+        if text:
+            clean_lines = [raw_line.strip() for raw_line in text.split("\n") if raw_line.strip()]
+            block_size = self._resolve_block_font_size(clean_lines)
+            for clean in clean_lines:
+                lines.append({
+                    "text": clean,
+                    "fontSize": block_size,
+                })
+        constrained = self._apply_vertical_constraints(lines)
+        return {
+            "lines": constrained,
+            "width": SUBTITLE_BOX_WIDTH,
+            "height": SUBTITLE_BOX_HEIGHT,
+        }
+
+    def _build_caption_schedule(self, tts_result: "TTSConversionResult", mode: str) -> List[Dict[str, Any]]:
+        tokens: List[Dict[str, Any]] = []
+        character_entries = getattr(tts_result, "character_timings", []) or []
+        source_text = getattr(tts_result, "source_text", None)
+        if source_text is None and isinstance(tts_result, dict):
+            source_text = tts_result.get("source_text")
+
+        if source_text and character_entries:
+            tokens = self._build_tokens_from_source_text(source_text, character_entries)
+        if not tokens:
+            if mode == "character" and character_entries:
+                for item in character_entries:
+                    char = item.get("char")
+                    if not char:
+                        continue
+                    start = float(item.get("start") or item.get("start_time") or item.get("startTime") or 0.0)
+                    tokens.append({"value": char, "start": max(0.0, start)})
+            elif character_entries:
+                tokens = self._build_tokens_from_characters(character_entries)
+            else:
+                words = getattr(tts_result, "word_timings", []) or []
+                if not words and character_entries:
+                    words = [{"text": entry.get("char"), "start": entry.get("start")} for entry in character_entries]
+                for item in words:
+                    word = item.get("text")
+                    if word is None:
+                        continue
+                    start = float(item.get("start") or 0.0)
+                    tokens.append({"value": word, "start": max(0.0, start)})
+        tokens.sort(key=lambda entry: entry["start"])
+        return tokens
+
+    def _build_tokens_from_source_text(self, source_text: str, character_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        segments = self._split_source_segments(source_text)
+        if not segments:
+            return []
+        entries: List[Tuple[str, str, float]] = []
+        for entry in character_entries:
+            raw_char = entry.get("char")
+            if raw_char is None:
+                continue
+            char_str = str(raw_char)
+            if not char_str:
+                continue
+            start = float(entry.get("start") or entry.get("start_time") or entry.get("startTime") or 0.0)
+            entries.append((char_str, self._normalize_char_for_match(char_str), max(0.0, start)))
+        if not entries:
+            return []
+        entry_index = 0
+        entry_count = len(entries)
+        tokens: List[Dict[str, Any]] = []
+        for segment_text, space_before in segments:
+            targets: List[Tuple[str, bool]] = []
+            for ch in segment_text:
+                if ch.isspace():
+                    continue
+                normalized = self._normalize_char_for_match(ch)
+                requires_match = self._requires_char_alignment(ch)
+                targets.append((normalized, requires_match))
+            if not targets:
+                continue
+            start_time: Optional[float] = None
+            probe_index = entry_index
+            matched = True
+            for seg_char, requires_match in targets:
+                found_index, char_start = self._find_next_char_match(entries, probe_index, seg_char)
+                if found_index is None:
+                    if requires_match:
+                        matched = False
+                        break
+                    continue
+                if start_time is None:
+                    start_time = char_start
+                probe_index = found_index
+            if not matched:
+                return []
+            if start_time is None:
+                if entry_count:
+                    reference_index = min(max(probe_index - 1, 0), entry_count - 1)
+                    start_time = entries[reference_index][2]
+                else:
+                    start_time = 0.0
+            entry_index = probe_index
+            tokens.append({
+                "value": segment_text,
+                "start": max(0.0, start_time),
+                "space_before": space_before,
+            })
+        return tokens
+
+    @staticmethod
+    def _split_source_segments(text: str) -> List[Tuple[str, bool]]:
+        segments: List[Tuple[str, bool]] = []
+        current: List[str] = []
+        space_pending = False
+        space_flag = False
+        for char in text:
+            if char.isspace():
+                if current:
+                    segments.append(("".join(current), space_flag))
+                    current = []
+                space_pending = True
+                continue
+            if not current:
+                space_flag = space_pending
+                space_pending = False
+            current.append(char)
+        if current:
+            segments.append(("".join(current), space_flag))
+        return segments
+
+    @staticmethod
+    def _normalize_char_for_match(char: str) -> str:
+        if not char:
+            return ""
+        mapped = SUBTITLE_CHAR_EQUIVALENTS.get(char, char)
+        if mapped.isalpha():
+            return mapped.casefold()
+        return mapped
+
+    @staticmethod
+    def _requires_char_alignment(char: str) -> bool:
+        return char.isalnum()
+
+    @staticmethod
+    def _find_next_char_match(entries: List[Tuple[str, str, float]], start_index: int, target: str) -> Tuple[Optional[int], Optional[float]]:
+        probe = start_index
+        count = len(entries)
+        while probe < count:
+            raw_char, normalized_char, char_start = entries[probe]
+            probe += 1
+            if raw_char.isspace():
+                continue
+            if normalized_char == target:
+                return probe, char_start
+        return None, None
+
+    def _build_tokens_from_characters(self, character_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        tokens: List[Dict[str, Any]] = []
+        chunk_chars: List[str] = []
+        chunk_start: Optional[float] = None
+        chunk_space_before = False
+        pending_space = False
+
+        def flush_chunk() -> None:
+            nonlocal chunk_chars, chunk_start, chunk_space_before
+            if not chunk_chars:
+                return
+            tokens.append({
+                "value": "".join(chunk_chars),
+                "start": max(0.0, chunk_start or 0.0),
+                "space_before": chunk_space_before,
+            })
+            chunk_chars = []
+            chunk_start = None
+            chunk_space_before = False
+
+        for entry in character_entries:
+            char = entry.get("char")
+            if char is None:
+                continue
+            char_str = str(char)
+            if not char_str:
+                continue
+            if char_str.isspace():
+                flush_chunk()
+                pending_space = True
+                continue
+            if not chunk_chars:
+                chunk_start = float(entry.get("start") or entry.get("start_time") or entry.get("startTime") or 0.0)
+                chunk_space_before = pending_space
+                pending_space = False
+            chunk_chars.append(char_str)
+
+        flush_chunk()
+        return tokens
+
+
+    def _append_caption_token(self, token: str, *, mode: str, space_before: Optional[bool] = None) -> None:
+        normalized = self._sanitize_token(token, mode)
+        if not normalized:
+            return
+        if normalized in SUBTITLE_OPENING_QUOTES and self._is_opening_quote_context():
+            self._pending_quote_prefix = f"{self._pending_quote_prefix}{normalized}"
+            return
+        if self._pending_quote_prefix:
+            normalized = f"{self._pending_quote_prefix}{normalized}"
+            self._pending_quote_prefix = ""
+        self._append_token_to_current_line(normalized, space_before)
+
+    def _sanitize_token(self, token: str, mode: str) -> str:
+        if token is None:
+            return ""
+        if mode == "character":
+            return token.replace("\r", "").replace("\n", "")
+        cleaned = token.replace("\r", " ").replace("\n", " ")
+        return " ".join(cleaned.split())
+    def _append_token_to_current_line(self, token: str, space_before: Optional[bool] = None) -> None:
+        if not self._subtitle_lines or self._subtitle_pending_new_line:
+            self._start_new_line()
+            self._subtitle_pending_new_line = False
+        line_index = len(self._subtitle_lines) - 1
+        base_text = self._subtitle_lines[line_index]
+        if not base_text:
+            spacer = ""
+        elif space_before is True:
+            spacer = " "
+        elif space_before is False:
+            spacer = ""
+        else:
+            spacer = "" if token in SUBTITLE_NO_SPACE_BEFORE else " "
+        candidate_text = (f"{base_text}{spacer}{token}" if base_text else token).strip()
+        target, max_chars = self._line_char_limits(line_index)
+        candidate_chars = self._subtitle_line_chars[line_index] + self._token_char_length(token, spacer)
+        if self._subtitle_line_chars[line_index] > 0 and candidate_chars > max_chars:
+            self._start_new_line()
+            line_index += 1
+            base_text = ""
+            spacer = ""
+            candidate_text = token
+            target, max_chars = self._line_char_limits(line_index)
+            candidate_chars = self._token_char_length(token)
+        self._subtitle_lines[line_index] = candidate_text
+        self._subtitle_line_chars[line_index] = candidate_chars
+        self._subtitle_pending_new_line = candidate_chars > target
+
+    def _start_new_line(self) -> None:
+        self._subtitle_lines.append("")
+        self._subtitle_line_chars.append(0)
+
+    def _line_char_limits(self, line_index: int) -> Tuple[int, int]:
+        growth_anchor = max(0, SUBTITLE_CHAR_GROWTH_LINE_START - 1)
+        extra_lines = max(0, line_index - growth_anchor)
+        extra_chars = extra_lines * SUBTITLE_CHAR_GROWTH_PER_LINE
+        target = SUBTITLE_BASE_CHAR_TARGET + extra_chars
+        max_chars = SUBTITLE_BASE_CHAR_MAX + extra_chars
+        return max(1, target), max(target, max_chars)
+
+    @staticmethod
+    def _token_char_length(token: str, spacer: str = "") -> int:
+        spacer_len = 1 if spacer == " " else 0
+        return spacer_len + len(token.replace(" ", ""))
+
+    def _is_opening_quote_context(self) -> bool:
+        if not self._subtitle_lines:
+            return True
+        last_line = self._subtitle_lines[-1] if self._subtitle_lines else ""
+        if not last_line:
+            return True
+        last_char = last_line[-1]
+        if last_char in {" ", "\t", "\n"}:
+            return True
+        return last_char in {"(", "[", "{", "-", "—", "\u2013"}
+
+    def _estimate_line_width(self, text: str, font_size: int) -> float:
+        if not text:
+            return 0.0
+        size = max(SUBTITLE_MIN_FONT_SIZE, min(SUBTITLE_MAX_FONT_SIZE, font_size))
+        font = self._get_subtitle_font(size)
+        if font is not None:
+            try:
+                if hasattr(font, "getlength"):
+                    return float(font.getlength(text))
+                bbox = font.getbbox(text)
+                if bbox:
+                    return float(bbox[2] - bbox[0])
+            except Exception:
+                pass
+        return float(len(text) * size * SUBTITLE_CHAR_WIDTH_RATIO)
+
+    def _line_width_limit(self, line_index: int) -> float:
+        base_ratio = SUBTITLE_PYRAMID_START_RATIO + max(0, line_index) * SUBTITLE_PYRAMID_RATIO_STEP
+        ratio = min(1.0, max(0.25, base_ratio))
+        return SUBTITLE_BOX_WIDTH * ratio
+
+    def _determine_block_font_size(self, lines: List[str]) -> int:
+        if not lines:
+            return SUBTITLE_MAX_FONT_SIZE
+        available_height = SUBTITLE_BOX_HEIGHT * SUBTITLE_VERTICAL_SAFE_RATIO
+        count = len(lines)
+        baseline = SUBTITLE_MAX_FONT_SIZE - max(0, count - 1) * SUBTITLE_LINE_FONT_STEP
+        font_size = max(SUBTITLE_MIN_FONT_SIZE, baseline)
+        while font_size > SUBTITLE_MIN_FONT_SIZE:
+            if self._block_fits_canvas(lines, font_size, available_height):
+                return font_size
+            font_size = max(SUBTITLE_MIN_FONT_SIZE, font_size - SUBTITLE_LINE_FONT_STEP)
+            if font_size == SUBTITLE_MIN_FONT_SIZE:
+                break
+        return font_size
+
+    def _resolve_block_font_size(self, lines: List[str]) -> int:
+        line_count = len(lines)
+        if line_count == 0:
+            self._subtitle_last_line_count = 0
+            self._subtitle_block_font_size = SUBTITLE_MAX_FONT_SIZE
+            return self._subtitle_block_font_size
+        needs_recalc = (
+            line_count != self._subtitle_last_line_count
+            or self._subtitle_block_font_size <= 0
+        )
+        if needs_recalc:
+            self._subtitle_block_font_size = self._determine_block_font_size(lines)
+            self._subtitle_last_line_count = line_count
+        return self._subtitle_block_font_size
+
+    def _block_fits_canvas(self, lines: List[str], font_size: int, available_height: float) -> bool:
+        total_height = len(lines) * font_size * SUBTITLE_LINE_HEIGHT_RATIO
+        if total_height > available_height:
+            return False
+        for idx, line in enumerate(lines):
+            width_limit = self._line_width_limit(idx)
+            width = self._estimate_line_width(line, font_size)
+            if width > (width_limit + SUBTITLE_WRAP_SLACK):
+                return False
+        return True
+
+    def _apply_vertical_constraints(self, lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not lines:
+            return []
+
+        available = SUBTITLE_BOX_HEIGHT * SUBTITLE_VERTICAL_SAFE_RATIO
+        multiplier = SUBTITLE_LINE_HEIGHT_RATIO
+
+        def total_height() -> float:
+            return sum(max(SUBTITLE_MIN_FONT_SIZE, entry.get("fontSize", SUBTITLE_MIN_FONT_SIZE)) * multiplier for entry in lines)
+
+        current_height = total_height()
+        if current_height > available:
+            scale = max(0.2, available / current_height)
+            for entry in lines:
+                entry["fontSize"] = max(SUBTITLE_MIN_FONT_SIZE, int(entry.get("fontSize", SUBTITLE_MIN_FONT_SIZE) * scale))
+
+        # If still too tall due to hitting the min size, gradually trim further.
+        for _ in range(25):
+            current_height = total_height()
+            if current_height <= available:
+                break
+            reduced = False
+            for entry in lines:
+                if entry.get("fontSize", SUBTITLE_MIN_FONT_SIZE) > SUBTITLE_MIN_FONT_SIZE:
+                    entry["fontSize"] -= 1
+                    reduced = True
+            if not reduced:
+                break
+
+        return lines
+
+    def _compute_caption_font_size(self, text: str) -> int:
+        if not text:
+            return SUBTITLE_MAX_FONT_SIZE
+        base_size = SUBTITLE_MAX_FONT_SIZE
+        line_count = max(1, text.count("\n") + 1)
+        line_penalty = (line_count - 1) * SUBTITLE_LINE_FONT_STEP
+        adjusted = max(SUBTITLE_MIN_FONT_SIZE, int(base_size - line_penalty))
+        return adjusted
+
     async def display_meme(self, path: str, is_meme: bool = True, duration: float = None, ready_event=None, ready_opacity: float | None = None, object_name_override: str | None = None):
         current_scene = self.ws.get_current_program_scene().current_program_scene_name
         scene_items = self.ws.get_scene_item_list(current_scene)

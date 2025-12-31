@@ -1,13 +1,16 @@
-import random
-from elevenlabs import save, VoiceSettings
-from elevenlabs.client import ElevenLabs
-from dotenv import load_dotenv
+import base64
 import os
+import random
 import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import azure.cognitiveservices.speech as speechsdk
 import keyboard
-from tools import debug_print, get_debug, get_reference, path_from_app_root
+from elevenlabs import VoiceSettings, save
+from elevenlabs.client import ElevenLabs
 from dotenv import load_dotenv
+from tools import debug_print, get_debug, get_reference, path_from_app_root
 
 load_dotenv()
 
@@ -15,6 +18,48 @@ try:
   client = ElevenLabs(api_key = (os.getenv('ELEVENLABS_API_KEY')))
 except TypeError:
   exit("You forgot to set ELEVENLABS_API_KEY in your environment!")
+
+
+@dataclass(slots=True)
+class TTSConversionResult:
+    path: str
+    alignment: Optional[Dict[str, Any]]
+    normalized_alignment: Optional[Dict[str, Any]]
+    character_timings: List[Dict[str, float | str]]
+    word_timings: List[Dict[str, float | str]]
+    duration_seconds: Optional[float]
+    audio_format: str
+    source_text: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "path": self.path,
+            "alignment": self.alignment,
+            "normalized_alignment": self.normalized_alignment,
+            "character_timings": self.character_timings,
+            "word_timings": self.word_timings,
+            "duration_seconds": self.duration_seconds,
+            "audio_format": self.audio_format,
+            "source_text": self.source_text,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Optional[Dict[str, Any]]) -> Optional["TTSConversionResult"]:
+        if not payload:
+            return None
+        path = payload.get("path")
+        if not path:
+            return None
+        return cls(
+            path=path,
+            alignment=payload.get("alignment"),
+            normalized_alignment=payload.get("normalized_alignment"),
+            character_timings=payload.get("character_timings") or [],
+            word_timings=payload.get("word_timings") or [],
+            duration_seconds=payload.get("duration_seconds"),
+            audio_format=payload.get("audio_format") or "mp3_44100_128",
+            source_text=payload.get("source_text"),
+        )
 
 class ElevenLabsManager:
     def __init__(self):
@@ -24,36 +69,175 @@ class ElevenLabsManager:
         self.default_speed = 1
         self.default_similarity = 0.75
         self.voice = None
+        self._last_result: Optional[TTSConversionResult] = None
         debug_print("ElevenLabsManager", "Initialized ElevenLabs client.")
 
 
-    # Convert text to speech, then save it to file. Returns the file path
-    def text_to_audio(self, input_text, voice=None, save_as_wave=True, model="eleven_multilingual_v2") -> str:
+    # Convert text to speech, save it to disk, and return timing metadata
+    def text_to_audio(self, input_text, voice=None, save_as_wave=True, model="eleven_multilingual_v2") -> Optional[TTSConversionResult]:
         if voice is None:
             voice = self.default_voice
         debug_print("ElevenLabsManager", f"Converting text to audio with voice: {voice}, model: {model}")
+
         media_dir = path_from_app_root("media")
         media_dir.mkdir(exist_ok=True)
         audio_dir = media_dir / "voice_audio"
         audio_dir.mkdir(exist_ok=True)
-        audio_saved = client.text_to_speech.convert(
-          text=input_text,
-          voice_id=voice,
-          model_id=model,
-          voice_settings=VoiceSettings(
-              stability=self.default_stability,
-              similarity_boost=self.default_similarity,
-              speed=self.default_speed
-           )
+
+        requested_format = "mp3_44100_128"
+        try:
+            response = client.text_to_speech.convert_with_timestamps(
+                voice_id=voice,
+                text=input_text,
+                model_id=model,
+                output_format=requested_format,
+                voice_settings=VoiceSettings(
+                    stability=self.default_stability,
+                    similarity_boost=self.default_similarity,
+                    speed=self.default_speed
+                ),
+            )
+        except Exception as exc:
+            print(f"[ERROR] ElevenLabs synthesis failed: {exc}")
+            return None
+
+        audio_b64 = getattr(response, "audio_base_64", None) or getattr(response, "audio_base64", None)
+        if not audio_b64:
+            print("[ERROR] ElevenLabs response did not include audio data.")
+            return None
+
+        audio_bytes = base64.b64decode(audio_b64)
+        random_number = random.randint(1000, 9999)
+        # Preserve legacy filenames so downstream filters still match on extensions.
+        extension = "wav" if save_as_wave else "mp3"
+        file_name = f"11___Msg{str(hash(input_text))}_{random_number}.{extension}"
+        tts_path = audio_dir / file_name
+        save(audio_bytes, str(tts_path))
+
+        alignment = self._dump_alignment(response.alignment)
+        normalized_alignment = self._dump_alignment(response.normalized_alignment)
+        alignment_source = alignment or normalized_alignment
+        character_timings = self._build_character_timings(alignment_source)
+        word_timings = self._build_word_timings(alignment_source)
+        duration_seconds = self._compute_duration(alignment_source)
+
+        result = TTSConversionResult(
+            path=str(tts_path),
+            alignment=alignment,
+            normalized_alignment=normalized_alignment,
+            character_timings=character_timings,
+            word_timings=word_timings,
+            duration_seconds=duration_seconds,
+            audio_format=requested_format,
+            source_text=input_text,
         )
-        random_number = random.randint(1000,9999)
-        if save_as_wave:
-          file_name = f"11___Msg{str(hash(input_text))}_{random_number}.wav"
-        else:
-          file_name = f"11___Msg{str(hash(input_text))}_{random_number}.mp3"
-        tts_file = os.path.join(os.path.abspath(os.curdir), audio_dir, file_name)
-        save(audio_saved, tts_file)
-        return tts_file
+        self._last_result = result
+        return result
+
+    def get_last_result(self) -> Optional[TTSConversionResult]:
+        return self._last_result
+
+    @staticmethod
+    def _dump_alignment(alignment) -> Optional[Dict[str, Any]]:
+        if alignment is None:
+            return None
+        try:
+            return alignment.model_dump()
+        except AttributeError:
+            return alignment
+
+    @staticmethod
+    def _build_character_timings(alignment: Optional[Dict[str, Any]]) -> List[Dict[str, float | str]]:
+        if not alignment:
+            return []
+        characters = alignment.get("characters") or []
+        start_times = alignment.get("character_start_times_seconds") or []
+        end_times = alignment.get("character_end_times_seconds") or []
+        timings: List[Dict[str, float | str]] = []
+        for char, start, end in zip(characters, start_times, end_times):
+            if char is None:
+                continue
+            try:
+                timings.append({"char": char, "start": float(start), "end": float(end)})
+            except (TypeError, ValueError):
+                continue
+        return timings
+
+    @staticmethod
+    def _build_word_timings(alignment: Optional[Dict[str, Any]]) -> List[Dict[str, float | str]]:
+        if not alignment:
+            return []
+
+        characters = alignment.get("characters") or []
+        start_times = alignment.get("character_start_times_seconds") or []
+        end_times = alignment.get("character_end_times_seconds") or []
+
+        segments: List[Dict[str, float | str]] = []
+        buffer: List[str] = []
+        buffer_start: Optional[float] = None
+        buffer_end: Optional[float] = None
+
+        def as_float(value: Any) -> Optional[float]:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        def flush_buffer() -> None:
+            nonlocal buffer, buffer_start, buffer_end
+            if buffer:
+                segments.append({
+                    "text": "".join(buffer),
+                    "start": buffer_start,
+                    "end": buffer_end,
+                })
+            buffer = []
+            buffer_start = None
+            buffer_end = None
+
+        punctuation = set(",.!?;:\"()[]{}")
+        joiners = {"'", "-", "–", "—"}
+
+        for char, start, end in zip(characters, start_times, end_times):
+            if char is None:
+                continue
+            if isinstance(char, str) and char.strip() == "":
+                flush_buffer()
+                continue
+
+            start_val = as_float(start)
+            end_val = as_float(end)
+
+            if char in punctuation:
+                flush_buffer()
+                segments.append({"text": char, "start": start_val, "end": end_val})
+                continue
+
+            if char in joiners and not buffer:
+                buffer_start = start_val
+                buffer.append(char)
+                buffer_end = end_val
+                continue
+
+            if buffer_start is None:
+                buffer_start = start_val
+            buffer.append(char)
+            buffer_end = end_val
+
+        flush_buffer()
+        return segments
+
+    @staticmethod
+    def _compute_duration(alignment: Optional[Dict[str, Any]]) -> Optional[float]:
+        if not alignment:
+            return None
+        end_times = alignment.get("character_end_times_seconds") or []
+        if not end_times:
+            return None
+        try:
+            return float(end_times[-1])
+        except (TypeError, ValueError):
+            return None
     
     def get_list_of_models(self):
         models = client.models.list()
@@ -236,13 +420,15 @@ class SpeechToTextManager:
         return False, None
     
 if __name__ == '__main__':
-    #elevenlabs_manager = ElevenLabsManager()
+    elevenlabs_manager = ElevenLabsManager()
+    sample = elevenlabs_manager.text_to_audio("Testing subtitles with timestamps.")
+    if sample:
+        print(f"Saved ElevenLabs audio to {sample.path}")
+        print(f"Preview word timings: {sample.word_timings[:5]}")
+
     azure_manager = SpeechToTextManager()
-    #azure_manager.get_list_of_voices()
     azure_manager.set_voice("en-US-CoraNeural")
     file_path = azure_manager.text_to_speech("I'm a little bingus baby.")
+    print(f"Azure sample saved to {file_path}")
 
-    #file_path = elevenlabs_manager.text_to_audio("This is my saved test audio, please make me beautiful")
-    #print("Finished with all tests")
-
-    time.sleep(30)
+    time.sleep(5)
