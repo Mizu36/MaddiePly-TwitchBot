@@ -397,10 +397,10 @@ class Gacha():
     async def _ensure_overlay_bridge(self) -> None:
         if self.overlay_bridge and self.overlay_bridge.is_running:
             return
-        host_setting = await get_setting("Gacha Overlay Host", default=GachaOverlayBridge.DEFAULT_HOST)
-        port_setting = await get_setting("Gacha Overlay Port", default=GachaOverlayBridge.DEFAULT_PORT)
-        path_setting = await get_setting("Gacha Overlay Path", default=GachaOverlayBridge.DEFAULT_PATH)
-        token_setting = await get_setting("Gacha Overlay Token", default="")
+        host_setting = GachaOverlayBridge.DEFAULT_HOST
+        port_setting = GachaOverlayBridge.DEFAULT_PORT
+        path_setting = GachaOverlayBridge.DEFAULT_PATH
+        token_setting = ""
         host_value = (host_setting or GachaOverlayBridge.DEFAULT_HOST).strip() or GachaOverlayBridge.DEFAULT_HOST
         path_value = (path_setting or GachaOverlayBridge.DEFAULT_PATH).strip() or GachaOverlayBridge.DEFAULT_PATH
         if not path_value.startswith("/"):
@@ -408,7 +408,7 @@ class Gacha():
         token_value = (token_setting or "").strip()
         new_config = {
             "host": host_value,
-            "port": int(port_setting or GachaOverlayBridge.DEFAULT_PORT),
+            "port": int(port_setting),
             "path": path_value,
             "token": token_value,
         }

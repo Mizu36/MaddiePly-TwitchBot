@@ -60,10 +60,6 @@ REQUIRED_SETTINGS = {
     "Gacha System Enabled": ("0", "BOOL"),
     "Gacha Pull Redemption Name": ("Gacha Pull", "TEXT"),
     "Gacha Change Set Redemption Name": ("Change Gacha Set", "TEXT"),
-    "Gacha Overlay Host": ("127.0.0.1", "TEXT"),
-    "Gacha Overlay Port": ("17890", "INTEGER"),
-    "Gacha Overlay Path": ("/gacha", "TEXT"),
-    "Gacha Overlay Token": ("", "TEXT"),
     "Stream Avatars Enabled": ("0", "BOOL"),
     "Debug Mode": ("False", "BOOL"),
 }
