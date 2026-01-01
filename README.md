@@ -14,6 +14,29 @@ A full-featured, GUI-driven Twitch automation suite that blends live chat modera
 - **Hotkeys Everywhere** – Global hotkey listener lets you trigger actions while streaming; GUI exposes capture dialogs with automatic conflict handling.
 - **Self-Healing Media** – Automated ffmpeg provisioning (via `local-ffmpeg`) plus background cleanup of generated memes, screenshots, and voice files keeps disk usage low.
 
+## Gacha System & Overlay
+The gacha workflow lives in [gacha.py](gacha.py) and mirrors a mobile "banner" pull experience:
+- **Pull logic & persistence:** `Gacha.roll_for_gacha()` pulls from the enabled set, tracks pity levels, awards shinies, and writes every pull plus level progression into the SQLite/online database layer. Users pick their active set with the Twitch command, and bit donations automatically bank toward extra rolls.
+- **Supplying art:** Drop your cards under `media/gacha/sets/<set_name>/<rarity>/card.png`. Rarity folders can use either the long names (`common`, `uncommon`, `rare`, `epic`, `legendary`) or the abbreviated versions (`N`, `R`, `SR`, `SSR`, `UR`). To add a shiny variant, create a subfolder under that rarity named after the base card and place the alternate art inside—it will be auto-detected by `Gacha.startup()` The name of the shiny file must match its non-shiny counterpart.
+- **Overlay bridge:** When the bot boots it launches `GachaOverlayBridge`, a local WebSocket server (`ws://127.0.0.1:17890/gacha` by default) that streams pull batches to any connected browser sources.
+
+### Creating the OBS browser source
+1. In OBS add a **Browser Source**, enable **Local File**, and point it at `media/gacha/gacha_overlay/index.html` (ship both `style.css`, `script.js`, and the `assets/` folder with it).
+2. Set the source to match your canvas (1920×1080 works well). Keep **Shutdown source when not visible** unchecked so the WebSocket stays connected. You can scale the source and move it anywhere on your OBS canvas.
+3. (Optional) Pass query parameters to override connection details, e.g. `file:///.../index.html?wsHost=127.0.0.1&wsPort=17890&wsPath=/gacha`. You can also append `wsToken=your_token` if you secure the bridge.
+4. Save the scene. When chat triggers rolls, the overlay animates batches of up to four pulls using the media you supplied.
+
+## AI Assistant Subtitles Overlay
+The assistant writes live captions to `media/subtitles/state.json`, and the bundled browser overlay polls that file every 120 ms to stay in sync.
+
+### Creating the browser source
+1. Add another **Browser Source** in OBS, enable **Local File**, and target `media/subtitles/index.html`.
+2. Use 1280×720 for width/height (the HTML canvas is fixed to a 16:9 plane). Position or crop inside OBS as desired.
+3. Make sure OBS can write to `media/subtitles/state.json` (the bot regenerates it on every utterance).
+4. Customize fonts, colors, or padding inside `overlay.css` if you want to restyle the captions. The JavaScript (`overlay.js`) automatically rescales text to avoid overflow.
+
+With both sources loaded you can hide/show them using scene visibility toggles without interrupting the polling loops.
+
 ## Quick Start
 1. **Clone & Open:** Pull this repository and open it in VS Code (or your editor of choice).
 2. **Run the launcher:** During development run `python launcher.py`. For stream/production machines, build the bundled executable via `pyinstaller --noconfirm --clean maddieply.spec` (details below) and launch `dist/MaddiePly/MaddiePly.exe`. The launcher will:
@@ -90,6 +113,15 @@ If you want Discord announcements, create a Discord bot, copy its token, and set
 3. Create a **Service Account**, then generate a JSON key (download it and place `credentials.json` in the project root).
 4. Share your Quotes spreadsheet with the service account email so it can read/write.
 5. Inside the GUI, paste the Sheet ID into the `Google Sheets Quotes Sheet ID` field (the Sheet ID is the long string in the sheet URL between `/d/` and `/edit`).
+
+### 8. Google Programmable Search (Optional)
+Hooking the assistant's `search_web` tool to Google requires two pieces: an API key from Google Cloud and a Programmable Search Engine (CSE) ID.
+
+1. In [Google Cloud Console](https://console.cloud.google.com), create/open a project, enable the **Custom Search JSON API**, then create an **API Key** under **APIs & Services → Credentials**. Copy the key into `.env` as `GOOGLE_API_KEY=...`.
+2. Visit [programmablesearchengine.google.com](https://programmablesearchengine.google.com/), create a new search engine, and configure the sites it should cover (choose "Search the entire web" if you want broad coverage). Copy the **Search engine ID** (also called `cx`) and set `GOOGLE_ENGINE_ID=...` in `.env`.
+3. Restart the launcher or packaged app so the new env vars load. The **Settings → AI → Google Search API Key** and **Google Search Engine ID** fields will now validate, and the assistant can call Google whenever it needs fresh context.
+
+Each key is billed by Google, so keep an eye on usage quotas in Cloud Console. You can revoke access at any time by clearing the `.env` entries and restarting the bot.
 
 ## OAuth Authorization Flow
 The bot needs user tokens for both the bot account and the broadcaster account.
