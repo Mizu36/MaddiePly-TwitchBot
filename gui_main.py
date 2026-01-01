@@ -381,6 +381,8 @@ class DBEditor(tk.Tk):
         self._event_tab_refresh_job = None
         self._obs_warning_label: tk.Label | None = None
         self._obs_warning_job: str | None = None
+        self._stt_warning_label: tk.Label | None = None
+        self._stt_warning_job: str | None = None
         self._google_credentials_valid = True
         self._google_credentials_error = ""
         self._settings_tooltip = None
@@ -403,6 +405,7 @@ class DBEditor(tk.Tk):
             pass
 
         self._init_obs_warning_banner()
+        self._init_stt_warning_banner()
 
         # Style for alternating rows in treeviews
         style = ttk.Style(self)
@@ -5099,6 +5102,12 @@ class DBEditor(tk.Tk):
                 self._obs_warning_job = None
         except Exception:
             pass
+        try:
+            if self._stt_warning_job:
+                self.after_cancel(self._stt_warning_job)
+                self._stt_warning_job = None
+        except Exception:
+            pass
         # Fire-and-forget the DB close so the GUI doesn't hang waiting for
         # asynchronous resources to shut down. If the DB loop exists and is
         # running we schedule the close there without waiting; otherwise we
@@ -5609,6 +5618,22 @@ class DBEditor(tk.Tk):
         self._obs_warning_label.place_forget()
         self._update_obs_warning_banner()
 
+    def _init_stt_warning_banner(self) -> None:
+        if self._stt_warning_label is not None:
+            return
+        # Overlay badge that surfaces when speech-to-text is actively recording.
+        self._stt_warning_label = tk.Label(
+            self,
+            text="Listening for Speech Input…",
+            bg="#1d4e89",
+            fg="white",
+            font=("Segoe UI", 10, "bold"),
+            padx=12,
+            pady=4,
+        )
+        self._stt_warning_label.place_forget()
+        self._update_stt_warning_banner()
+
     def _obs_connection_ready(self) -> bool:
         try:
             obs_manager = get_reference("OBSManager")
@@ -5634,6 +5659,32 @@ class DBEditor(tk.Tk):
             label.lift()
             label.place(relx=1.0, rely=0.0, x=-16, y=16, anchor="ne")
         self._obs_warning_job = self.after(3000, self._update_obs_warning_banner)
+
+    def _tts_listening_active(self) -> bool:
+        try:
+            stt_manager = get_reference("SpeechToTextManager")
+        except Exception:
+            stt_manager = None
+        if not stt_manager:
+            return False
+        indicator = getattr(stt_manager, "is_listening", None)
+        if callable(indicator):
+            try:
+                return bool(indicator())
+            except Exception:
+                return False
+        return bool(getattr(stt_manager, "_listening", False))
+
+    def _update_stt_warning_banner(self) -> None:
+        label = self._stt_warning_label
+        if label is None:
+            return
+        if self._tts_listening_active():
+            label.lift()
+            label.place(relx=0.0, rely=0.0, x=16, y=16, anchor="nw")
+        else:
+            label.place_forget()
+        self._stt_warning_job = self.after(400, self._update_stt_warning_banner)
 
     def _build_users_tab(self) -> None:
         users_frame = ttk.Frame(self.nb)

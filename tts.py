@@ -260,6 +260,7 @@ class SpeechToTextManager:
         self.audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
         self.list_of_voices = []
         self.audio_manager = get_reference("AudioManager")
+        self._listening = False
         debug_print("AzureTTS", "Azure Speech SDK initialized.")
 
     def set_voice(self, voice_name):
@@ -328,75 +329,91 @@ class SpeechToTextManager:
             return None
 
     def speechtotext_from_mic_continuous(self, stop_key="p"):
-            debug_print("AzureTTS", f"Starting continuous speech recognition. Stop key: {stop_key}")
+        debug_print("AzureTTS", f"Starting continuous speech recognition. Stop key: {stop_key}")
+        self._set_listening(True)
+        try:
             self.azure_speechrecognizer = speechsdk.SpeechRecognizer(speech_config=self.azure_speechconfig)
             done = False
-            # Optional callback to print out whenever a chunk of speech is finished being recognized. Make sure to let this finish before ending the speech recognition.
+
+            # Optional callback fired whenever a chunk of speech finishes recognition.
             def recognized_cb(evt: speechsdk.SpeechRecognitionEventArgs):
                 debug_print("AzureTTS", 'RECOGNIZED: {}'.format(evt))
+
             self.azure_speechrecognizer.recognized.connect(recognized_cb)
 
-            # We register this to fire if we get a session_stopped or cancelled event.
+            # When the service stops or cancels we break the loop.
             def stop_cb(evt: speechsdk.SessionEventArgs):
                 debug_print("AzureTTS", 'CLOSING speech recognition on {}'.format(evt))
                 nonlocal done
                 done = True
 
-            # Connect callbacks to the events fired by the speech recognizer
             self.azure_speechrecognizer.session_stopped.connect(stop_cb)
             self.azure_speechrecognizer.canceled.connect(stop_cb)
 
-            # This is where we compile the results we receive from the ongoing "Recognized" events
+            # Capture final results so the assistant can respond after we stop listening.
             all_results = []
+
             def handle_final_result(evt):
                 all_results.append(evt.result.text)
+
             self.azure_speechrecognizer.recognized.connect(handle_final_result)
 
-            # Call stop_continuous_recognition_async() to stop recognition.
             result_future = self.azure_speechrecognizer.start_continuous_recognition_async()
-            result_future.get()  # wait for voidfuture, so we know engine initialization is done.
+            result_future.get()
             print('Continuous Speech Recognition is now running, say something.')
 
             while not done:
                 if keyboard.is_pressed(stop_key):
                     print("\nEnding azure speech recognition\n")
                     self.azure_speechrecognizer.stop_continuous_recognition_async()
-                    time.sleep(2) # Wait for session to properly close
+                    time.sleep(2)
                     break
 
             final_result = " ".join(all_results).strip()
             debug_print("AzureTTS", f"Heres the result we got!\n\n{final_result}\n\n")
             return final_result
+        finally:
+            self._set_listening(False)
     
     def timed_speechtotext_from_mic(self, seconds):
         """
         Continuously listens to the microphone for a specified number of seconds and returns the recognized text.
         """
         debug_print("AzureTTS", f"Starting timed speech recognition for {seconds} seconds.")
-        self.azure_audioconfig = speechsdk.audio.AudioConfig(use_default_microphone=True)
-        self.azure_speechrecognizer = speechsdk.SpeechRecognizer(speech_config=self.azure_speechconfig, audio_config=self.azure_audioconfig)
+        self._set_listening(True)
+        try:
+            self.azure_audioconfig = speechsdk.audio.AudioConfig(use_default_microphone=True)
+            self.azure_speechrecognizer = speechsdk.SpeechRecognizer(speech_config=self.azure_speechconfig, audio_config=self.azure_audioconfig)
 
-        debug_print("AzureTTS", f"Listening for {seconds} seconds...")
-        start_time = time.time()
-        recognized_text = ""
+            debug_print("AzureTTS", f"Listening for {seconds} seconds...")
+            start_time = time.time()
+            recognized_text = ""
 
-        while time.time() - start_time < seconds:
-            speech_recognition_result = self.azure_speechrecognizer.recognize_once_async().get()
-            if speech_recognition_result.reason == speechsdk.ResultReason.RecognizedSpeech:
-                recognized_text += speech_recognition_result.text + " "
-            elif speech_recognition_result.reason == speechsdk.ResultReason.NoMatch:
-                if not recognized_text:
-                    debug_print("AzureTTS", "No speech could be recognized.")
-            elif speech_recognition_result.reason == speechsdk.ResultReason.Canceled:
-                if get_debug():
-                    cancellation_details = speech_recognition_result.cancellation_details
-                    debug_print("AzureTTS", "Speech Recognition canceled: {}".format(cancellation_details.reason))
-                    if cancellation_details.reason == speechsdk.CancellationReason.Error:
-                        debug_print("AzureTTS", "Error details: {}".format(cancellation_details.error_details))
-                        debug_print("AzureTTS", "Did you set the speech resource key and region values?")
-        
-        debug_print("AzureTTS", f"Recognized text: {recognized_text.strip()}")
-        return recognized_text.strip()
+            while time.time() - start_time < seconds:
+                speech_recognition_result = self.azure_speechrecognizer.recognize_once_async().get()
+                if speech_recognition_result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                    recognized_text += speech_recognition_result.text + " "
+                elif speech_recognition_result.reason == speechsdk.ResultReason.NoMatch:
+                    if not recognized_text:
+                        debug_print("AzureTTS", "No speech could be recognized.")
+                elif speech_recognition_result.reason == speechsdk.ResultReason.Canceled:
+                    if get_debug():
+                        cancellation_details = speech_recognition_result.cancellation_details
+                        debug_print("AzureTTS", "Speech Recognition canceled: {}".format(cancellation_details.reason))
+                        if cancellation_details.reason == speechsdk.CancellationReason.Error:
+                            debug_print("AzureTTS", "Error details: {}".format(cancellation_details.error_details))
+                            debug_print("AzureTTS", "Did you set the speech resource key and region values?")
+
+            debug_print("AzureTTS", f"Recognized text: {recognized_text.strip()}")
+            return recognized_text.strip()
+        finally:
+            self._set_listening(False)
+
+    def _set_listening(self, active: bool) -> None:
+        self._listening = bool(active)
+
+    def is_listening(self) -> bool:
+        return self._listening
     
     def get_list_of_voices(self):
         voices_list = []
