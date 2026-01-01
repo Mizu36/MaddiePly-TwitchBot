@@ -889,7 +889,7 @@ class CustomPointRedemptionBuilder():
                 if not self.gacha_handler:
                     self.gacha_handler = get_reference("GachaHandler")
                 if self.gacha_handler:
-                    event = await self.gacha_handler.roll_for_gacha(twitch_user_id=user_id, num_pulls=1)
+                    event = await self.gacha_handler.roll_for_gacha(twitch_user_id=user_id, twitch_display_name=payload.user.display_name, num_pulls=1)
                     if type(event) is dict:
                         self.event_manager.add_event(event)
                     else:
@@ -944,7 +944,7 @@ class CustomPointRedemptionBuilder():
         if await get_setting("Gacha System Enabled", False):
             if number_of_rolls > 0:
                 if self.gacha_handler:
-                    gacha_task = asyncio.create_task(self.gacha_handler.roll_for_gacha(payload.user.id, number_of_rolls, bits_toward_next_pull=bits % 500))
+                    gacha_task = asyncio.create_task(self.gacha_handler.roll_for_gacha(twitch_user_id=payload.user.id, twitch_display_name=payload.user.display_name, num_pulls=number_of_rolls, bits_toward_next_pull=bits % 500))
         if not self.online_database:
             self.online_database = get_reference("OnlineDatabase")
         user_data = await self.online_database.get_specific_user_data(twitch_user_id=user_id, field="bits_donated")
@@ -966,7 +966,7 @@ class CustomPointRedemptionBuilder():
             event = {"type": "cheer", "user": payload.user.display_name, "event": payload}
             if not self.assistant:
                 self.assistant = get_reference("AssistantManager")
-            asyncio.create_task(self.assistant.generate_voiced_response(event))
+            await asyncio.create_task(self.assistant.generate_voiced_response(event))
             if gacha_task:
                 if isinstance(gacha_task, asyncio.Task):
                     gacha_event = await gacha_task
