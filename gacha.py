@@ -154,7 +154,7 @@ class Gacha():
         return new_gachas
                     
 
-    async def roll_for_gacha(self, twitch_user_id: str, num_pulls: int = 1, bits_toward_next_pull: int = 0) -> dict:
+    async def roll_for_gacha(self, twitch_user_id: str, twitch_display_name: str = "", num_pulls: int = 1, bits_toward_next_pull: int = 0) -> dict:
         """
         Rolls the gacha for a user a specified number of times. Defaults to 1 roll. Every 500 bits donated grants one roll. 
         So donations of 1000 bits = 2 rolls, 1500 bits = 3 rolls, etc.
@@ -231,7 +231,7 @@ class Gacha():
                 "name": selected_gacha_name
             })
             #Dictionary to return {"type": "gacha", "event_type": f"{num_pulls} gacha pulls.", "results": [gacha_results]}
-        return {"type": "gacha", "event_type": f"{num_pulls} gacha pulls.", "results": gacha_results, "number_of_pulls": num_pulls, "user_id": twitch_user_id}
+        return {"type": "gacha", "event_type": f"{num_pulls} gacha pulls for {twitch_display_name if twitch_display_name else twitch_user_id}.", "results": gacha_results, "number_of_pulls": num_pulls, "user_id": twitch_user_id}
     
     async def _roll_for_rarity(self) -> Literal["UR", "SSR", "SR", "R", "N"]:
         """Rolls for a gacha rarity based on defined chances."""
