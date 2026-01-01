@@ -3,6 +3,7 @@ import time
 import os
 import sys
 import asyncio
+import threading
 import obsws_python as obs
 from obsws_python.error import OBSSDKRequestError
 from PIL import Image, ImageFont
@@ -94,18 +95,10 @@ class OBSWebsocketsManager:
     FADE_STEP_INTERVAL = 0.02
     
     def __init__(self):
-        # Connect to websockets
         self.connected = False
-        while True:
-            try:
-                with suppress_stderr():
-                    self.ws = obs.ReqClient(host = WEBSOCKET_HOST, port = WEBSOCKET_PORT, password = WEBSOCKET_PASSWORD, json_response = False)
-                self.connected = True
-                break
-            except Exception:
-                self.connected = False
-                print("\n[ERROR]Could not connect to OBS websockets. Retrying in 10 seconds...")
-                time.sleep(10)
+        self._reconnect_lock = threading.Lock()
+        self._connect_thread: Optional[threading.Thread] = None
+        self._connect_with_retry()
         self.onscreen_location = None
         self.offscreen_location = None
         self.display_fade_in_seconds = self.FADE_STEPS * self.FADE_STEP_INTERVAL
@@ -121,6 +114,51 @@ class OBSWebsocketsManager:
         self._subtitle_last_line_count: int = 0
         self._pending_quote_prefix: str = ""
         debug_print("OBSWebsocketsManager", "OBSWebsocketsManager initialized.")
+
+    def _connect_with_retry(self) -> None:
+        while True:
+            try:
+                with suppress_stderr():
+                    self.ws = obs.ReqClient(
+                        host=WEBSOCKET_HOST,
+                        port=WEBSOCKET_PORT,
+                        password=WEBSOCKET_PASSWORD,
+                        json_response=False,
+                    )
+                self.connected = True
+                return
+            except Exception as exc:
+                self.connected = False
+                print(f"\n[ERROR]Could not connect to OBS websockets ({exc}). Retrying in 10 seconds...")
+                time.sleep(10)
+
+    def _perform_reconnect(self) -> None:
+        self.disconnect()
+        self._connect_with_retry()
+        self.video_width, self.video_height = self._load_video_settings()
+
+    def _async_reconnect(self) -> None:
+        with self._reconnect_lock:
+            try:
+                self._perform_reconnect()
+            except Exception as exc:
+                print(f"[ERROR]OBS reconnection attempt failed: {exc}")
+                raise
+
+    def refresh_connection(self, *, blocking: bool = False) -> bool:
+        if blocking:
+            with self._reconnect_lock:
+                self._perform_reconnect()
+            return True
+        if self._reconnect_lock.locked():
+            return False
+        thread = threading.Thread(target=self._async_reconnect, name="OBSReconnect", daemon=True)
+        self._connect_thread = thread
+        thread.start()
+        return True
+
+    def is_reconnecting(self) -> bool:
+        return self._reconnect_lock.locked()
 
     def get_display_fade_in_delay(self) -> float:
         """Return the configured fade-in duration for meme/gif sources."""
@@ -1162,6 +1200,7 @@ class OBSWebsocketsManager:
                 self.ws.disconnect()
         finally:
             self.connected = False
+            self.ws = None
 
 async def tests():
     await meme_creation_workflow()

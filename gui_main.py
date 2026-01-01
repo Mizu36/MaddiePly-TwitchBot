@@ -556,6 +556,13 @@ class DBEditor(tk.Tk):
         )
         btn_refresh_eleven.pack(side=tk.LEFT, padx=4)
 
+        btn_reconnect_obs = ttk.Button(
+            tools_toolbar,
+            text="Reconnect OBS Websocket",
+            command=self._handle_obs_reconnect_click,
+        )
+        btn_reconnect_obs.pack(side=tk.LEFT, padx=4)
+
         # Scrollable body so long tool groups remain accessible at smaller window sizes.
         tools_body = ttk.Frame(tools_frame)
         tools_body.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
@@ -6395,6 +6402,41 @@ class DBEditor(tk.Tk):
                 self.purge_users_btn.state(["!disabled"])
             except Exception:
                 pass
+
+    def _handle_obs_reconnect_click(self) -> None:
+        """Manually restart the OBS websocket connection loop."""
+
+        def worker():
+            obs_manager = get_reference("OBSManager")
+            if not obs_manager:
+                self.after(0, lambda: messagebox.showerror(
+                    "OBS Reconnect",
+                    "OBS Manager is not initialized yet. Start the bot before attempting to reconnect.",
+                    parent=self,
+                ))
+                return
+            if obs_manager.is_reconnecting():
+                self.after(0, lambda: messagebox.showinfo(
+                    "OBS Reconnect",
+                    "A reconnection attempt is already running.",
+                    parent=self,
+                ))
+                return
+            started = obs_manager.refresh_connection()
+            if started:
+                self.after(0, lambda: messagebox.showinfo(
+                    "OBS Reconnect",
+                    "Attempting to reconnect to OBS. The bot will keep retrying every 10 seconds until it succeeds.",
+                    parent=self,
+                ))
+            else:
+                self.after(0, lambda: messagebox.showinfo(
+                    "OBS Reconnect",
+                    "A reconnection attempt is already running.",
+                    parent=self,
+                ))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _refresh_elevenlabs_models(self) -> None:
         """Diagnostic: fetch ElevenLabs models on demand and refresh inline UI."""
