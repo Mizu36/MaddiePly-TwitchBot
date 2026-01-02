@@ -1457,7 +1457,18 @@ class DBEditor(tk.Tk):
             self.gacha_widgets["sections"] = sections
             return
 
-        for set_name in sorted(data.keys(), key=lambda name: name.lower()):
+        visible_sets = [name for name in data.keys() if not self._should_hide_gacha_set(name)]
+        if not visible_sets:
+            ttk.Label(
+                content,
+                text="No public gacha sets available.",
+                foreground="#666666",
+            ).pack(anchor=tk.W, padx=8, pady=8)
+            self.gacha_widgets["status_var"].set("No gacha sets available.")
+            self.gacha_widgets["sections"] = sections
+            return
+
+        for set_name in sorted(visible_sets, key=lambda name: name.lower()):
             rows = data.get(set_name) or []
             sections[set_name] = self._create_gacha_set_section(content, set_name, rows)
 
@@ -1559,6 +1570,12 @@ class DBEditor(tk.Tk):
         if misc:
             ordered.append(("OTHER", "Other", misc))
         return ordered
+
+    @staticmethod
+    def _should_hide_gacha_set(set_name: typing.Any) -> bool:
+        if not set_name:
+            return False
+        return str(set_name).strip().lower() == "test set"
 
     @staticmethod
     def _format_gacha_name(raw_name: typing.Any) -> str:

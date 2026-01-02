@@ -465,9 +465,12 @@ class Gacha():
         if not self.twitch_bot:
             self.twitch_bot = get_reference("TwitchBot")
         user_input = payload.user_input.strip().lower()
+        if user_input == "test set":
+            await payload.refund()
+            await self.twitch_bot.send_chat(f"{payload.user.display_name}, you cannot change to the 'test set.' You have been refunded. Please try again.")
         if await self.online_database.get_all_gacha_data_by_set_name(user_input) is not None:
             await self.online_database.update_user_gacha_set(payload.user.id, user_input)
-            await self.twitch_bot.send_chat(f"@{payload.user.display_name}, your gacha set has been changed to '{user_input}'!")
+            await self.twitch_bot.send_chat(f"{payload.user.display_name}, your gacha set has been changed to '{user_input}'!")
         else:
             await payload.refund()
             await self.twitch_bot.send_chat(f"{payload.user.display_name}, the gacha set '{user_input}' does not exist or has been disabled. You have been refunded. Please try again.")
