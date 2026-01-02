@@ -240,7 +240,7 @@ body {
   position: relative;
   width: clamp(220px, 17vw, 340px);
   border-radius: 28px;
-  overflow: hidden;
+  overflow: visible;
   z-index: 2;
 }
 
@@ -264,10 +264,15 @@ body {
   will-change: transform, opacity;
 }
 
-.rarity-badge svg {
+.rarity-badge[data-rarity="common"] {
+  width: clamp(96px, 8vw, 140px);
+}
+
+.rarity-badge-image {
   width: 100%;
   height: 100%;
   display: block;
+  object-fit: contain;
   filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.55));
 }
 
@@ -280,69 +285,12 @@ body {
   transform: scale(0.05);
 }
 
-.rarity-badge-label {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-family: "Oxanium", "Space Grotesk", sans-serif;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  font-size: clamp(26px, 2.2vw, 40px);
-  color: #ffffff;
-  -webkit-text-stroke: 2px #000;
-  text-shadow:
-    2px 0 0 #000,
-    -2px 0 0 #000,
-    0 2px 0 #000,
-    0 -2px 0 #000,
-    1.5px 1.5px 0 #000,
-    -1.5px 1.5px 0 #000,
-    1.5px -1.5px 0 #000,
-    -1.5px -1.5px 0 #000;
-}
-
-.rarity-badge[data-rarity="common"] .rarity-badge-label,
-.rarity-badge[data-rarity="uncommon"] .rarity-badge-label {
-  color: #fffefa;
-}
-
-.rarity-badge[data-rarity="rare"] .rarity-badge-label {
-  color: #63ffab;
-}
-
-.rarity-badge[data-rarity="epic"] .rarity-badge-label {
-  color: #ffe56f;
-}
-
-.rarity-badge[data-rarity="legendary"] .rarity-badge-label,
-.rarity-badge[data-rarity="xr"] .rarity-badge-label {
-  background-size: 220% auto;
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  -webkit-text-stroke-color: #4a3000;
-  animation: rarity-text-sparkle 2.4s linear infinite;
-  text-shadow:
-    0 0 10px rgba(255, 198, 120, 0.65),
-    0 0 18px rgba(255, 198, 120, 0.35);
-}
-
-.rarity-badge[data-rarity="legendary"] .rarity-badge-label {
-  color: #80f7ff;
-  background-image: linear-gradient(120deg, #43f0ff, #9ef6ff, #c8ffff, #43f0ff);
-}
-
-.rarity-badge[data-rarity="xr"] .rarity-badge-label {
-  color: #ffd76d;
-  background-image: linear-gradient(120deg, #ffd76d, #fff4c7, #f2b84c, #fff4c7);
-  -webkit-text-stroke-color: #8a5300;
-}
 
 .gacha-card-frame img {
   display: block;
   width: 100%;
   height: auto;
+  border-radius: 28px;
   filter: brightness(calc(0.25 + 0.75 * (1 - var(--silhouette-strength, 1))));
   transition: filter var(--card-silhouette-duration, 0.45s) ease-out;
 }
@@ -440,11 +388,3 @@ body {
   }
 }
 
-@keyframes rarity-text-sparkle {
-  0% {
-    background-position: 0% 50%;
-  }
-  100% {
-    background-position: 200% 50%;
-  }
-}

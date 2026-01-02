@@ -112,60 +112,13 @@
     legendary: "star_orange.svg",
   };
 
-  const RARITY_BADGE_MAP = {
-    common: {
-      key: "common",
-      label: "N",
-      shape: "circle",
-      color: "#f7d774",
-    },
-    uncommon: {
-      key: "uncommon",
-      label: "R",
-      shape: "triangle",
-      color: "#73ffba",
-    },
-    rare: {
-      key: "rare",
-      label: "SR",
-      shape: "star5",
-      color: "#7fd4ff",
-    },
-    epic: {
-      key: "epic",
-      label: "SSR",
-      shape: "star7",
-      color: "#c093ff",
-    },
-    legendary: {
-      key: "legendary",
-      label: "UR",
-      shape: "star9",
-      color: "#f6a45c",
-    },
-  };
-
-  const SHINY_BADGE_META = {
-    key: "xr",
-    label: "XR",
-    shape: "star12",
-    color: "#ffffff",
-    gradientStops: [
-      { offset: "0%", color: "#ff8fd0" },
-      { offset: "35%", color: "#8be9ff" },
-      { offset: "65%", color: "#c9ff8b" },
-      { offset: "100%", color: "#ffdea8" },
-    ],
-  };
-
-  const SVG_NS = "http://www.w3.org/2000/svg";
+  const BADGE_RARITIES = ["common", "uncommon", "rare", "epic", "legendary"];
 
   class BrowserGachaAnimator {
     constructor(stageEl) {
       this.stage = stageEl;
       this.queue = Promise.resolve();
       this._activeMeta = null;
-      this._badgeIdCounter = 0;
       this._ensureStageChrome();
     }
 
@@ -344,9 +297,10 @@
       (this.entryHost || this.stage).append(root);
 
       const rarityKey = resolveRarityKey(data?.rarity);
+      const isShiny = Boolean(data?.is_shiny);
       root.dataset.rarity = rarityKey;
-      cardFrame.classList.toggle("is-shiny", Boolean(data?.is_shiny));
-      starWrapper.classList.toggle("is-shiny", Boolean(data?.is_shiny));
+      cardFrame.classList.toggle("is-shiny", isShiny);
+      starWrapper.classList.toggle("is-shiny", isShiny);
       nameEl.textContent = formatName(data?.name);
       const levelMeta = resolveLevelMeta(data);
       levelNumber.textContent = levelMeta.currentText;
@@ -372,7 +326,7 @@
           opening: openingVideo,
         },
         rarityKey,
-        Boolean(data?.is_shiny),
+        isShiny,
       );
 
       const entry = {
@@ -404,13 +358,14 @@
           metrics: null,
         },
       };
-      const starAsset = resolveStarAsset(rarityKey, Boolean(data?.is_shiny));
+      const starAsset = resolveStarAsset(rarityKey, isShiny);
       const starReady = this._configureStar(entry, starAsset);
-      const badgeMeta = this._resolveBadgeMeta(rarityKey, Boolean(data?.is_shiny));
-      if (badgeMeta) {
-        entry.badge = this._createRarityBadge(cardFrame, badgeMeta);
+      const badgeAsset = resolveBadgeAsset(rarityKey, isShiny);
+      if (badgeAsset) {
+        entry.badge = this._createRarityBadge(cardFrame, badgeAsset, isShiny, rarityKey);
       }
-      entry.ready = Promise.all([loadImage(cardImg), starReady]);
+      const badgeReady = entry.badge?.ready || Promise.resolve();
+      entry.ready = Promise.all([loadImage(cardImg), starReady, badgeReady]);
       return entry;
     }
 
@@ -453,104 +408,25 @@
       setVideoSource(videos.opening, openingPath);
     }
 
-    _nextBadgeId() {
-      this._badgeIdCounter = (this._badgeIdCounter + 1) % 100000;
-      return `badge-${Date.now()}-${this._badgeIdCounter}`;
-    }
-
-    _resolveBadgeMeta(rarityKey, isShiny) {
-      if (isShiny) {
-        return { ...SHINY_BADGE_META };
-      }
-      const normalized = (rarityKey || "common").toLowerCase();
-      const meta = RARITY_BADGE_MAP[normalized];
-      if (!meta) {
-        return { ...RARITY_BADGE_MAP.common };
-      }
-      return { ...meta };
-    }
-
-    _createRarityBadge(container, meta) {
-      if (!container || !meta) {
+    _createRarityBadge(container, assetSrc, isShiny, rarityKey) {
+      if (!container || !assetSrc) {
         return null;
       }
       const root = document.createElement("div");
       root.className = "rarity-badge";
-      root.dataset.rarity = meta.key || meta.label?.toLowerCase() || "";
-      const svg = this._buildBadgeSvg(meta);
-      const label = document.createElement("div");
-      label.className = "rarity-badge-label";
-      label.textContent = meta.label || "?";
-      root.append(svg, label);
+      const dataKey = isShiny ? "shiny" : (rarityKey || "common").toLowerCase();
+      root.dataset.rarity = dataKey;
+      const img = document.createElement("img");
+      img.className = "rarity-badge-image";
+      img.alt = "";
+      img.decoding = "async";
+      img.draggable = false;
+      img.src = assetSrc;
+      root.append(img);
       root.classList.add("is-stealthed");
       root.style.setProperty("--badge-scale", "0.05");
       container.append(root);
-      return { root, svg, label, meta };
-    }
-
-    _buildBadgeSvg(meta) {
-      const svg = document.createElementNS(SVG_NS, "svg");
-      svg.setAttribute("viewBox", "0 0 120 120");
-      svg.setAttribute("role", "presentation");
-      const shapeName = (meta.shape || "circle").toLowerCase();
-      let shapeEl;
-      if (shapeName === "circle") {
-        shapeEl = document.createElementNS(SVG_NS, "circle");
-        shapeEl.setAttribute("cx", "60");
-        shapeEl.setAttribute("cy", "60");
-        shapeEl.setAttribute("r", "38");
-      } else if (shapeName === "triangle") {
-        shapeEl = document.createElementNS(SVG_NS, "polygon");
-        shapeEl.setAttribute("points", buildRegularPolygonPoints(3, 54));
-      } else if (shapeName === "star5") {
-        shapeEl = document.createElementNS(SVG_NS, "polygon");
-        shapeEl.setAttribute("points", buildStarPolygonPoints(5, 54, 0.48));
-      } else if (shapeName === "star7") {
-        shapeEl = document.createElementNS(SVG_NS, "polygon");
-        shapeEl.setAttribute("points", buildStarPolygonPoints(7, 55, 0.5));
-      } else if (shapeName === "star9") {
-        shapeEl = document.createElementNS(SVG_NS, "polygon");
-        shapeEl.setAttribute("points", buildStarPolygonPoints(9, 55, 0.53));
-      } else if (shapeName === "star12") {
-        shapeEl = document.createElementNS(SVG_NS, "polygon");
-        shapeEl.setAttribute("points", buildStarPolygonPoints(12, 56, 0.6));
-      } else {
-        shapeEl = document.createElementNS(SVG_NS, "circle");
-        shapeEl.setAttribute("cx", "60");
-        shapeEl.setAttribute("cy", "60");
-        shapeEl.setAttribute("r", "52");
-      }
-      const strokeColor = meta.stroke || "#050505";
-      const strokeWidth = Number(meta.strokeWidth ?? 5);
-      shapeEl.setAttribute("stroke", strokeColor);
-      shapeEl.setAttribute("stroke-width", strokeWidth.toString());
-      shapeEl.setAttribute("stroke-linejoin", "round");
-      shapeEl.setAttribute("vector-effect", "non-scaling-stroke");
-
-      if (meta.gradientStops && meta.gradientStops.length) {
-        const gradientId = this._nextBadgeId();
-        const defs = document.createElementNS(SVG_NS, "defs");
-        const gradient = document.createElementNS(SVG_NS, "linearGradient");
-        gradient.setAttribute("id", gradientId);
-        gradient.setAttribute("x1", "0%");
-        gradient.setAttribute("y1", "0%");
-        gradient.setAttribute("x2", "100%");
-        gradient.setAttribute("y2", "100%");
-        defs.appendChild(gradient);
-        meta.gradientStops.forEach((stop) => {
-          const stopEl = document.createElementNS(SVG_NS, "stop");
-          stopEl.setAttribute("offset", stop.offset);
-          stopEl.setAttribute("stop-color", stop.color);
-          gradient.appendChild(stopEl);
-        });
-        svg.appendChild(defs);
-        shapeEl.setAttribute("fill", `url(#${gradientId})`);
-      } else {
-        shapeEl.setAttribute("fill", meta.color || "#ffffff");
-      }
-
-      svg.appendChild(shapeEl);
-      return svg;
+      return { root, image: img, ready: loadImage(img) };
     }
 
     _configureStar(entry, assetSrc) {
@@ -1039,35 +915,6 @@
     }
   }
 
-  function buildRegularPolygonPoints(sides, radius = 52, rotationDeg = -90, cx = 60, cy = 60) {
-    const points = [];
-    const angleStep = (Math.PI * 2) / Math.max(3, sides);
-    const rotation = (rotationDeg * Math.PI) / 180;
-    for (let i = 0; i < Math.max(3, sides); i += 1) {
-      const angle = rotation + i * angleStep;
-      const x = cx + radius * Math.cos(angle);
-      const y = cy + radius * Math.sin(angle);
-      points.push(`${x.toFixed(2)},${y.toFixed(2)}`);
-    }
-    return points.join(" ");
-  }
-
-  function buildStarPolygonPoints(points, outerRadius = 54, innerRatio = 0.5, rotationDeg = -90, cx = 60, cy = 60) {
-    const coords = [];
-    const innerRadius = outerRadius * innerRatio;
-    const totalVertices = Math.max(2, points) * 2;
-    const step = Math.PI / Math.max(2, points);
-    const rotation = (rotationDeg * Math.PI) / 180;
-    for (let i = 0; i < totalVertices; i += 1) {
-      const radius = i % 2 === 0 ? outerRadius : innerRadius;
-      const angle = rotation + i * step;
-      const x = cx + radius * Math.cos(angle);
-      const y = cy + radius * Math.sin(angle);
-      coords.push(`${x.toFixed(2)},${y.toFixed(2)}`);
-    }
-    return coords.join(" ");
-  }
-
   function chunkArray(source, size) {
     const chunks = [];
     for (let i = 0; i < source.length; i += size) {
@@ -1098,6 +945,15 @@
     const normalized = (rarityKey || "common").toString().toLowerCase();
     const fileName = RARITY_STAR_MAP[normalized] || RARITY_STAR_MAP.common;
     return fileName ? buildImagePath(fileName) : "";
+  }
+
+  function resolveBadgeAsset(rarityKey, isShiny) {
+    if (isShiny) {
+      return buildImagePath("badge_shiny.png");
+    }
+    const normalized = (rarityKey || "common").toString().trim().toLowerCase();
+    const safeRarity = BADGE_RARITIES.includes(normalized) ? normalized : "common";
+    return buildImagePath(`badge_${safeRarity}.png`);
   }
 
   function computeSlotOffsets(count, spacing) {
