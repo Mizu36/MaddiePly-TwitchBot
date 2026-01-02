@@ -63,6 +63,11 @@ MEDIA_SUBFOLDERS = [
     "screenshots",
     "soundFX",
     "voice_audio",
+    "subtitles",
+    "gacha",
+    "gacha/gacha_overlay",
+    "gacha/gacha_overlay/assets",
+    "gacha/sets",
 ]
 ENV_PATH = path_from_app_root(".env")
 
@@ -87,7 +92,19 @@ def ensure_directory_structure() -> None:
     data_dir.mkdir(exist_ok=True)
     media_dir.mkdir(exist_ok=True)
     for sub in MEDIA_SUBFOLDERS:
-        (media_dir / sub).mkdir(exist_ok=True)
+        (media_dir / sub).mkdir(parents=True, exist_ok=True)
+    _ensure_subtitle_state_file(media_dir)
+
+
+def _ensure_subtitle_state_file(media_dir: Path) -> None:
+    state_path = media_dir / "subtitles" / "state.json"
+    if state_path.exists():
+        return
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text("{}", encoding="utf-8")
+    except Exception as exc:
+        _warn(f"Unable to create subtitle state file at {state_path}: {exc}")
 
 
 def ensure_env_file() -> None:
