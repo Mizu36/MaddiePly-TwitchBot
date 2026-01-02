@@ -235,7 +235,7 @@ class Gacha():
                 "name": selected_gacha_name
             })
             #Dictionary to return {"type": "gacha", "event_type": f"{num_pulls} gacha pulls.", "results": [gacha_results]}
-        return {"type": "gacha", "event_type": f"{num_pulls} gacha pulls for {twitch_display_name if twitch_display_name else twitch_user_id}.", "results": gacha_results, "number_of_pulls": num_pulls, "user_id": twitch_user_id}
+        return {"type": "gacha", "event_type": f"{num_pulls} gacha pulls for {twitch_display_name if twitch_display_name else twitch_user_id}.", "results": gacha_results, "number_of_pulls": num_pulls, "user_id": twitch_user_id, "set_name": active_set}
     
     async def _roll_for_rarity(self) -> Literal["UR", "SSR", "SR", "R", "N"]:
         """Rolls for a gacha rarity based on defined chances."""
@@ -355,22 +355,23 @@ class Gacha():
         debug_print("Gacha", f"Handling gacha event for user ID: {event.get('user_id')} with event type: {event.get('event_type')}")
         twitch_user_id = event.get("user_id")
         gacha_results = event.get("results", [])
+        set_name = event.get("set_name", "unknown set")
         if len(gacha_results) == 0:
             debug_print("Gacha", "No gacha results to handle.")
             return
         if len(gacha_results) <= 4:
-            await self.animate_gacha_rolls(twitch_user_id, gacha_results)
+            await self.animate_gacha_rolls(twitch_user_id, gacha_results, set_name)
             return
         four_results = []
         for pull in gacha_results: # Send every five pulls to animate_gacha_rolls, final batch may be less than five
             four_results.append(pull)
             if len(four_results) == 4:
-                await self.animate_gacha_rolls(twitch_user_id, four_results)
+                await self.animate_gacha_rolls(twitch_user_id, four_results, set_name)
                 four_results = []
             elif len(four_results) > 0 and pull == gacha_results[-1]:
-                await self.animate_gacha_rolls(twitch_user_id, four_results)
+                await self.animate_gacha_rolls(twitch_user_id, four_results, set_name)
 
-    async def animate_gacha_rolls(self, twitch_user_id: str, gacha_results: list[dict]) -> None:
+    async def animate_gacha_rolls(self, twitch_user_id: str, gacha_results: list[dict], set_name: str) -> None:
         """
         Streams gacha rolls to the browser overlay. Supports up to five simultaneous pulls
         per animation batch. When the overlay is offline, results are logged to the console so
@@ -388,7 +389,7 @@ class Gacha():
             display_name = user_info.get("display_name", "")
         if overlay:
             try:
-                delivered = await overlay.send_gacha_pulls(twitch_user_id, total_pulls, gacha_results, display_name)
+                delivered = await overlay.send_gacha_pulls(twitch_user_id, total_pulls, gacha_results, display_name, set_name)
             except Exception as exc:
                 debug_print("Gacha", f"Unable to push gacha payload to browser overlay: {exc}")
         if not delivered:

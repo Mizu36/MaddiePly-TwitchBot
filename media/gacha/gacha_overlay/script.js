@@ -119,6 +119,8 @@
       this.stage = stageEl;
       this.queue = Promise.resolve();
       this._activeMeta = null;
+      this.setBannerEl = null;
+      this.setBannerNameEl = null;
       this._ensureStageChrome();
     }
 
@@ -147,6 +149,19 @@
         this.bannerNameEl = name;
         this.bannerPullsEl = pulls;
       }
+      if (!this.setBannerEl || !this.setBannerEl.isConnected) {
+        const setBanner = document.createElement("div");
+        setBanner.className = "gacha-set-banner";
+        const prefix = document.createElement("span");
+        prefix.className = "set-banner-prefix";
+        prefix.textContent = "Summoning From";
+        const name = document.createElement("span");
+        name.className = "set-banner-name";
+        setBanner.append(prefix, name);
+        this.stage.append(setBanner);
+        this.setBannerEl = setBanner;
+        this.setBannerNameEl = name;
+      }
     }
 
     _updateBanner(meta) {
@@ -154,6 +169,7 @@
       if (!this.bannerEl) {
         return;
       }
+      this._updateSetBanner(meta);
       const rawName = meta?.displayName || meta?.userName || meta?.userId;
       const displayName = typeof rawName === "string" ? rawName.trim() : "";
       const totalPulls = Number(meta?.totalPulls);
@@ -188,6 +204,7 @@
       }
       this._activeMeta = null;
       this._updateBanner(null);
+      this._updateSetBanner(null);
     }
 
     enqueue(pulls, meta = {}) {
@@ -209,6 +226,15 @@
         displayName: typeof meta?.displayName === "string" ? meta.displayName : "",
         userName: typeof meta?.userName === "string" ? meta.userName : "",
         userId: typeof meta?.userId === "string" ? meta.userId : "",
+        setName: formatSetName(
+          typeof meta?.setName === "string"
+            ? meta.setName
+            : typeof meta?.set_name === "string"
+              ? meta.set_name
+              : typeof meta?.set === "string"
+                ? meta.set
+                : "",
+        ),
       };
       this._activeMeta = normalizedMeta;
       this._updateBanner(normalizedMeta);
@@ -221,6 +247,22 @@
       }
       this._activeMeta = null;
       this._updateBanner(null);
+       this._updateSetBanner(null);
+    }
+
+    _updateSetBanner(meta) {
+      this._ensureStageChrome();
+      if (!this.setBannerEl || !this.setBannerNameEl) {
+        return;
+      }
+      const raw = typeof meta?.setName === "string" ? meta.setName.trim() : "";
+      if (!raw) {
+        this.setBannerNameEl.textContent = "";
+        this.setBannerEl.classList.remove("is-visible");
+        return;
+      }
+      this.setBannerNameEl.textContent = raw;
+      this.setBannerEl.classList.add("is-visible");
     }
 
     async _animateBatch(batch) {
@@ -985,6 +1027,13 @@
       .replace(/\b\w/g, (char) => char.toUpperCase());
   }
 
+  function formatSetName(raw) {
+    if (!raw) {
+      return "";
+    }
+    return formatName(raw);
+  }
+
   function resolveLevelMeta(data) {
     const rawLevel = Number.isFinite(Number(data?.level)) ? Number(data.level) : 0;
     const current = Math.max(0, Math.trunc(rawLevel));
@@ -1044,6 +1093,12 @@
     try {
       resolved = new URL(normalized, OVERLAY_BASE_URL).href;
     } catch (err) {
+  function formatSetName(raw) {
+    if (!raw) {
+      return "";
+    }
+    return formatName(raw);
+  }
       overlayWarn("Unable to resolve video path", normalized, err);
     }
     video.src = resolved;
@@ -1331,10 +1386,26 @@
         } else if (payload.user && typeof payload.user.id === "string" && payload.user.id.trim().length) {
           userId = payload.user.id.trim();
         }
+        const setNameCandidates = [
+          payload.setName,
+          payload.set_name,
+          payload.set,
+          data.setName,
+          data.set_name,
+          data.set,
+        ];
+        let setName = "";
+        for (const candidate of setNameCandidates) {
+          if (typeof candidate === "string" && candidate.trim().length) {
+            setName = candidate.trim();
+            break;
+          }
+        }
         const meta = {
           totalPulls: normalizedTotal,
           displayName,
           userId,
+          setName: formatSetName(setName),
         };
         if (pulls.length) {
           window.runPulls(pulls, meta);

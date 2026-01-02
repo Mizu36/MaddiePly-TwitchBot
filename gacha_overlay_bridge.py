@@ -99,6 +99,7 @@ class GachaOverlayBridge:
         total_pulls: int,
         pulls: list[dict[str, Any]],
         display_name: str = "",
+        set_name: str = "",
     ) -> bool:
         """Broadcast the latest pulls to all connected overlay clients."""
         payload = {
@@ -109,6 +110,7 @@ class GachaOverlayBridge:
                 "pulls": pulls,
                 "timestamp": time.time(),
                 "displayName": display_name,
+                "setName": set_name
             },
         }
         return await self._broadcast(payload)

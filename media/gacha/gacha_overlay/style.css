@@ -68,6 +68,49 @@ body {
     transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.gacha-set-banner {
+  position: absolute;
+  bottom: 5vh;
+  left: 50%;
+  transform: translate(-50%, 12px) scale(0.94);
+  padding: 10px 28px;
+  border-radius: 999px;
+  background: linear-gradient(110deg, rgba(6, 10, 22, 0.85), rgba(12, 35, 58, 0.82));
+  border: 1px solid rgba(104, 194, 255, 0.4);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  color: var(--label-text);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 18;
+  transition:
+    opacity 0.4s ease,
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gacha-set-banner.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.set-banner-prefix {
+  font-size: clamp(10px, 0.8vw, 12px);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.set-banner-name {
+  font-family: "Oxanium", "Space Grotesk", sans-serif;
+  font-size: clamp(16px, 1.6vw, 28px);
+  letter-spacing: 0.08em;
+  color: #bfe6ff;
+  text-shadow: 0 0 18px rgba(111, 216, 255, 0.55);
+}
+
 .gacha-batch-banner::before {
   content: "";
   width: 14px;
