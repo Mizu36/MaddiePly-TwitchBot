@@ -77,8 +77,10 @@ class Gacha():
         new_shinies = []
         if local_shinies:
             debug_print("Gacha", f"Processing {len(local_shinies)} shiny gacha files.")
+            online_gacha_list = await self.online_database.get_all_gacha_data()
             for gacha_name, set_name, shiny_file in local_shinies:
                 for gacha in online_gacha_list:
+                    gacha_data = None
                     if gacha["name"].lower() == gacha_name and gacha["set_name"].lower() == set_name:
                         gacha_data = gacha
                         break
@@ -90,6 +92,7 @@ class Gacha():
                             set_name=set_name,
                             local_shiny_image_path=str(shiny_file),
                         )
+                        new_shinies.append(f"shiny_{gacha_name}")
                 else:
                     debug_print("Gacha", f"Shiny gacha '{gacha_name}' in set '{set_name}' has no matching normal gacha entry. Skipping shiny addition.")
         debug_print("Gacha", f"Found {len(new_gachas)} new gachas. Added {len(new_shinies)} new shinies.")
