@@ -9,7 +9,7 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 project_root = Path.cwd()
 
 resource_datas = []
-for folder in ("media", "data", "ffmpeg_bin"):
+for folder in ("data", "ffmpeg_bin"):
     src = project_root / folder
     if src.exists():
         resource_datas.append((str(src), folder))
