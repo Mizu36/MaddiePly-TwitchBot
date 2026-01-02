@@ -249,8 +249,7 @@ GACHA_RARITY_ORDER = [
 ]
 GACHA_RARITY_LABELS = {code: label for code, label in GACHA_RARITY_ORDER}
 
-# Flip these once the gacha system is production-ready so the toggle re-enables itself.
-GACHA_SYSTEM_READY = False
+GACHA_SYSTEM_READY = True
 GACHA_SYSTEM_SETTING_KEY = "Gacha System Enabled"
 GACHA_SYSTEM_DISABLED_TOOLTIP = (
     "The gacha system isn't complete yet, so it can't be enabled right now."
