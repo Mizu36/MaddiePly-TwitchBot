@@ -135,6 +135,7 @@ class Gacha():
         new_shinies = []
         if local_shinies:
             debug_print("Gacha", f"Processing {len(local_shinies)} shiny gacha files.")
+            online_gacha_list = await self.online_database.get_all_gacha_data()
             for base_name, set_name, shiny_file in local_shinies:
                 for gacha in online_gacha_list:
                     if gacha["name"].lower() == base_name and gacha["set_name"].lower() == set_name:
