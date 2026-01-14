@@ -1,5 +1,4 @@
 from tools import get_reference, set_reference, debug_print, get_app_root
-from db import get_setting
 from gacha_overlay_bridge import GachaOverlayBridge
 from pathlib import Path
 from random import randint, random, choice
@@ -190,9 +189,15 @@ class Gacha():
         for _ in range(num_pulls):
             is_shiny = await self._calculate_shiny_chance(set_level, completed_set)
             rarity = await self._roll_for_rarity()
-            gacha_pool = rarity_index.get(rarity)
+            gacha_pool = rarity_index.get(rarity, None)
+            attempts = 0
+            while not gacha_pool and attempts < 10:
+                debug_print("Gacha", f"No gacha found for rarity '{rarity}' in set '{active_set}'. Rolling for a different rarity.")
+                rarity = await self._roll_for_rarity()
+                gacha_pool = rarity_index.get(rarity, None)
+                attempts += 1
             if not gacha_pool:
-                debug_print("Gacha", f"No gacha found for rarity '{rarity}' in set '{active_set}'. Skipping roll.")
+                debug_print("Gacha", f"Failed to find any gacha pool after multiple attempts for user ID: {twitch_user_id}. Skipping this pull.")
                 continue
             selected_gacha_id, selected_gacha_name, current_level = self._select_gacha_from_pool(
                 gacha_pool,
@@ -205,9 +210,15 @@ class Gacha():
             if randint(1, 100) <= chance:
                 debug_print("Gacha", f"User ID: {twitch_user_id} triggered pity repull at level {current_level} for gacha ID: {selected_gacha_id}.")
                 rarity = await self._roll_for_rarity()
-                gacha_pool = rarity_index.get(rarity)
+                gacha_pool = rarity_index.get(rarity, None)
+                attempts = 0
+                while not gacha_pool and attempts < 10:
+                    debug_print("Gacha", f"No gacha found for rarity '{rarity}' in set '{active_set}'. Rolling for a different rarity.")
+                    rarity = await self._roll_for_rarity()
+                    gacha_pool = rarity_index.get(rarity, None)
+                    attempts += 1
                 if not gacha_pool:
-                    debug_print("Gacha", f"No gacha found for rarity '{rarity}' in set '{active_set}' during pity repull.")
+                    debug_print("Gacha", f"Failed to find any gacha pool after multiple attempts for user ID: {twitch_user_id}. Skipping this pull.")
                     continue
                 selected_gacha_id, selected_gacha_name, current_level = self._select_gacha_from_pool(
                     gacha_pool,
