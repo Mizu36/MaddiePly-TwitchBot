@@ -8,7 +8,7 @@ import threading
 import json
 import re
 from dotenv import load_dotenv
-from tools import debug_print, get_reference
+from tools import debug_print, get_reference, set_reference
 from db import get_prompt, get_setting
 
 load_dotenv()
@@ -77,6 +77,7 @@ def num_of_tokens(messages, model: str = "gpt-4o"):
 class OpenAiManager:
     
     def __init__(self):
+        set_reference("GPTManager", self)
         self.prompts = []
         self.default_model = None
         self.fine_tune_model = None
