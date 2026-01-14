@@ -9,10 +9,10 @@ import random
 import json
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import tkinter.font as tkfont
-import textwrap
 from tkinter.scrolledtext import ScrolledText
+import textwrap
 from db import (
     save_location_capture,
     get_setting,
@@ -25,11 +25,10 @@ from db import (
     get_randomizer_modifier_entries,
     add_randomizer_entry,
     remove_randomizer_entry,
+    get_database_loop
 )
-from tkinter import simpledialog
 from ai_logic import start_timer_manager_in_background
 from tools import set_debug, debug_print, get_random_number, get_reference, path_from_app_root
-from db import get_database_loop
 import typing
 import testing
 from online_db import OnlineDatabase
