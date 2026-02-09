@@ -237,6 +237,16 @@ class CustomEventBuilder():
                                     }
         debug_print("CustomBuilder", "CustomEventBuilder initialized.")
 
+    async def _refresh_browser_overlays(self) -> None:
+        manager = self.obs_manager or get_reference("OBSManager")
+        self.obs_manager = manager
+        if not manager:
+            return
+        try:
+            await manager.refresh_browser_sources()
+        except Exception as exc:
+            debug_print("CustomBuilder", f"OBS browser refresh failed: {exc}")
+
     def _prepare_input_for_token(self, token: str, inputs: list | None, input_ptr: int) -> tuple:
         behavior = self.code_behavior.get(token.upper(), {})
         needs_db_value = int(behavior.get("db_inputs", 0) or 0)
@@ -890,6 +900,7 @@ class CustomEventBuilder():
                 if not self.gacha_handler:
                     self.gacha_handler = get_reference("GachaHandler")
                 if self.gacha_handler:
+                    await self._refresh_browser_overlays()
                     event = await self.gacha_handler.roll_for_gacha(twitch_user_id=user_id, twitch_display_name=payload.user.display_name, num_pulls=1)
                     if type(event) is dict:
                         self.event_manager.add_event(event)
@@ -945,6 +956,7 @@ class CustomEventBuilder():
         if await get_setting("Gacha System Enabled", False):
             if number_of_rolls > 0:
                 if self.gacha_handler:
+                    await self._refresh_browser_overlays()
                     gacha_task = asyncio.create_task(self.gacha_handler.roll_for_gacha(twitch_user_id=payload.user.id, twitch_display_name=payload.user.display_name, num_pulls=number_of_rolls, bits_toward_next_pull=bits % 500))
         if not self.online_database:
             self.online_database = get_reference("OnlineDatabase")
