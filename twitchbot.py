@@ -4,7 +4,7 @@ import os
 import logging
 import random
 from dotenv import load_dotenv
-from custom_channel_point_builder import CustomPointRedemptionBuilder
+from custom_event_builder import CustomEventBuilder
 from db import setup_database, get_all_commands, get_setting
 from online_db import OnlineDatabase
 from google_api import add_quote, get_quote, get_random_quote, get_random_quote_containing_words
@@ -379,7 +379,6 @@ class CommandHandler(commands.Component):
         self.gacha_handler = None
         self.audio_manager = None
         self.shared_chat = False
-        self.shared_chat_welcome = False
         self.shared_chat_response = False
         self.shared_chat_channel_points = False
         self.shared_chat_ad = False
@@ -410,7 +409,7 @@ class CommandHandler(commands.Component):
         debug_print("CommandHandler", "CommandHandler initialized.")
 
     async def start_custom_builder(self) -> None:
-        self.custom_builder = CustomPointRedemptionBuilder()
+        self.custom_builder = CustomEventBuilder()
         set_reference("PointBuilder", self.custom_builder)
 
     async def start_online_database(self) -> None:
@@ -639,44 +638,25 @@ class CommandHandler(commands.Component):
                     await self.online_database.create_user(user_id, user_data)
                 await self.online_database.increment_column(table="users", column_filter="twitch_id", value=user_id, column_to_increment="twitch_number_of_messages", increment_by=1)
                 increment = None
-                if not self.shared_chat or self.shared_chat_message_scheduler:
+                if not self.shared_chat or self.shared_chat_message_scheduler: # Increment message count if not in shared chat or if shared chat message scheduler is enabled
                     increment = asyncio.create_task(self.scheduler.increment_message_count())
-                if not self.shared_chat or self.shared_chat_welcome:
-                    if user_name not in self.welcomed_users and user_name not in self.users_to_greet:
-                        if not self.first_user_greeted:
-                            self.first_user_greeted = True
-                            chime_enabled = await get_setting("First Chat of Stream Chime Enabled", True)
-                            if chime_enabled:
-                                try:
-                                    soundFX = await self.online_database.get_specific_user_data(twitch_user_id=user_id, field="chime")
-                                    if soundFX == "off":
-                                        debug_print("CommandHandler", f"Sound FX is turned off for user {user_name}.")
-                                    elif soundFX == "on":
-                                        if not self.audio_manager:
-                                            self.audio_manager = get_reference("AudioManager")
-                                        asyncio.create_task(self.audio_manager.play_random_sound_fx())
-                                    elif soundFX not in [None, "", "None", "null", "none", "NULL"]:
-                                        if not self.audio_manager:
-                                            self.audio_manager = get_reference("AudioManager")
-                                        asyncio.create_task(self.audio_manager.play_sound_fx_by_name(soundFX))
-                                    else:
-                                        if not self.audio_manager:
-                                            self.audio_manager = get_reference("AudioManager")
-                                        asyncio.create_task(self.audio_manager.play_random_sound_fx())
-                                except Exception as e:
-                                    print(f"Error fetching sound FX for user {user_name}: {e}")
-                            self.welcomed_users.append(user_name)
-                            prompt = f"{payload.chatter.display_name} is the first person to show up to work today at ModdCorp."
-                            if not self.assistant:
-                                self.assistant = get_reference("AssistantManager")
-                            response = await self.assistant.general_response(prompt)
-                            await self.bot.send_chat(response)
-                        else:
-                            self.users_to_greet.append(user_name)
-                            if self.greeting_task is None or self.greeting_task.done():
-                                self.greeting_task = asyncio.create_task(self.greet_newcomers())
-                else:
-                    debug_print("CommandHandler", f"Skipping welcome for {user_name} due to shared chat settings.")
+                if await get_setting("Welcome Viewers Enabled", True):
+                    if (not self.shared_chat) or (self.shared_chat and self.shared_chat_welcome): # Greet user if not in shared chat mode and welcome viewers is enabled or if shared chat welcome is enabled
+                        if user_name not in self.welcomed_users and user_name not in self.users_to_greet:
+                            if not self.first_user_greeted:
+                                self.first_user_greeted = True
+                                self.welcomed_users.append(user_name)
+                                prompt = f"{payload.chatter.display_name} is the first person to show up to work today at ModdCorp."
+                                if not self.assistant:
+                                    self.assistant = get_reference("AssistantManager")
+                                response = await self.assistant.general_response(prompt)
+                                await self.bot.send_chat(response)
+                            else:
+                                self.users_to_greet.append(user_name)
+                                if self.greeting_task is None or self.greeting_task.done():
+                                    self.greeting_task = asyncio.create_task(self.greet_newcomers())
+                    else:
+                        debug_print("CommandHandler", f"Skipping welcome for {user_name} due to shared chat settings.")
                 user_id = payload.chatter.id
                 user_data: dict = await self.online_database.get_user_data(twitch_user_id=user_id)
                 data_to_update = {}
@@ -906,7 +886,7 @@ class CommandHandler(commands.Component):
                 asyncio.create_task(self.bot.send_chat(f"@{payload.user.display_name}, channel point redemptions are disabled in Shared Chat mode. Your redemption has been refunded."))
                 return
         if not self.custom_builder:
-            self.custom_builder = CustomPointRedemptionBuilder()
+            self.custom_builder = CustomEventBuilder()
             set_reference("PointBuilder", self.custom_builder)
         asyncio.create_task(self.custom_builder.channel_points_redemption_handler(payload, redeem_type))
     
@@ -971,6 +951,11 @@ class CommandHandler(commands.Component):
     async def toggle_shared_chat(self, shared: bool) -> None:
         debug_print("CommandHandler", f"Toggling Shared Chat mode to {'enabled' if shared else 'disabled'}.")
         self.shared_chat = shared
+        if self.greeting_task:
+            try:
+                self.greeting_task.cancel()
+            except Exception as e:
+                print(f"Failed to cancel greeting task: {e}")
         if shared:
             unregister_all_commands()
             if not self.scheduler:
@@ -1011,6 +996,9 @@ class CommandHandler(commands.Component):
 
     @commands.Component.listener()
     async def event_message(self, payload: twitchio.ChatMessage) -> None:
+        if payload.source_broadcaster: # Ignores messages sent in other broadcaster's chats when shared chat is enabled. source_broadcaster == None when message occurs in the broadcaster's own chat.
+            debug_print("CommandHandler", f"Ignoring message from {payload.chatter.display_name} in {payload.source_broadcaster.display_name}'s chat")
+            return
         if self.message_timer and self.message_timer.done():
             try:
                 exc = self.message_timer.exception()
@@ -1032,7 +1020,7 @@ class CommandHandler(commands.Component):
     async def event_cheer(self, payload: twitchio.ChannelCheer) -> None:
         debug_print("CommandHandler", f"Handling cheer from {payload.user.display_name}: {payload.bits} bits")
         if not self.custom_builder:
-            self.custom_builder = CustomPointRedemptionBuilder()
+            self.custom_builder = CustomEventBuilder()
             set_reference("PointBuilder", self.custom_builder)
         asyncio.create_task(self.custom_builder.handle_cheer(payload))
 
