@@ -515,27 +515,31 @@ class AssistantManager():
         subtitle_task = None
         subtitle_result = None
         subtitle_from_payload = False
-        if payload:
-            raw_subtitles = payload.get("subtitle_result")
-            if isinstance(raw_subtitles, TTSConversionResult):
-                subtitle_result = raw_subtitles
-                subtitle_from_payload = True
-            elif isinstance(raw_subtitles, dict):
-                subtitle_result = TTSConversionResult.from_dict(raw_subtitles)
-                subtitle_from_payload = subtitle_result is not None
-        if subtitle_result is None and self.latest_tts_result and self.latest_tts_result.path:
-            try:
-                audio_target = Path(audio_path).resolve()
-                tts_target = Path(self.latest_tts_result.path).resolve()
-                if audio_target == tts_target:
+        subtitles_enabled = await get_setting("Subtitles Enabled", True)
+        if subtitles_enabled:
+            if payload:
+                raw_subtitles = payload.get("subtitle_result")
+                if isinstance(raw_subtitles, TTSConversionResult):
+                    subtitle_result = raw_subtitles
+                    subtitle_from_payload = True
+                elif isinstance(raw_subtitles, dict):
+                    subtitle_result = TTSConversionResult.from_dict(raw_subtitles)
+                    subtitle_from_payload = subtitle_result is not None
+            if subtitle_result is None and self.latest_tts_result and self.latest_tts_result.path:
+                try:
+                    audio_target = Path(audio_path).resolve()
+                    tts_target = Path(self.latest_tts_result.path).resolve()
+                    if audio_target == tts_target:
+                        subtitle_result = self.latest_tts_result
+                except Exception:
                     subtitle_result = self.latest_tts_result
-            except Exception:
-                subtitle_result = self.latest_tts_result
-        if subtitle_result and payload is not None and not subtitle_from_payload:
-            payload["subtitle_result"] = subtitle_result.to_dict()
-        self.latest_tts_result = None
-        if subtitle_result is None:
-            await self.obs.clear_subtitles()
+            if subtitle_result and payload is not None and not subtitle_from_payload:
+                payload["subtitle_result"] = subtitle_result.to_dict()
+            self.latest_tts_result = None
+            if subtitle_result is None:
+                await self.obs.clear_subtitles()
+        else:
+            self.latest_tts_result = None
         bounce_task = None
         original_transform = None
         cleaned_up = False
@@ -598,6 +602,10 @@ class AssistantManager():
                     print("Audio warmup did not complete in time; continuing.")
 
             if subtitle_result:
+                try:
+                    await self.obs.refresh_browser_sources()
+                except Exception as exc:
+                    debug_print("Assistant", f"OBS browser refresh failed: {exc}")
                 subtitle_task = asyncio.create_task(
                     self.obs.run_subtitle_track(subtitle_result, SUBTITLE_UPDATE_MODE)
                 )
