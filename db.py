@@ -12,6 +12,8 @@ REQUIRED_SETTINGS = {
     "Elevenlabs Voice ID": ("null", "TEXT"),
     "Elevenlabs Synthesizer Model": ("eleven_multilingual_v2", "TEXT"),
     "Elevenlabs TTS Volume": ("100", "INTEGER"),
+    "Subtitles Enabled": ("1", "BOOL"),
+    "Subtitles Style": ("Cascading", "TEXT"),
     "Default OpenAI Model": ("gpt-4o", "TEXT"),
     "Fine-tune GPT Model": ("null", "TEXT"),
     "Fine-tune Bot Detection Model": ("null", "TEXT"),
@@ -61,6 +63,7 @@ REQUIRED_SETTINGS = {
     "Gacha Pull Redemption Name": ("Gacha Pull", "TEXT"),
     "Gacha Change Set Redemption Name": ("Change Gacha Set", "TEXT"),
     "Stream Avatars Enabled": ("0", "BOOL"),
+    "Welcome Viewers Enabled": ("1", "BOOL"),
     "Debug Mode": ("False", "BOOL"),
 }
 

@@ -28,6 +28,7 @@ from db import (
     get_database_loop
 )
 from ai_logic import start_timer_manager_in_background
+from subtitle_overlay import SubtitleOverlayServer
 from tools import set_debug, debug_print, get_random_number, get_reference, path_from_app_root
 import typing
 import testing
@@ -381,6 +382,9 @@ class DBEditor(tk.Tk):
         self._obs_warning_job: str | None = None
         self._stt_warning_label: tk.Label | None = None
         self._stt_warning_job: str | None = None
+        self._shared_chat_label: tk.Label | None = None
+        self._shared_chat_job: str | None = None
+        self._shared_chat_toggle_btn: tk.Button | None = None
         self._google_credentials_valid = True
         self._google_credentials_error = ""
         self._settings_tooltip = None
@@ -404,6 +408,7 @@ class DBEditor(tk.Tk):
 
         self._init_obs_warning_banner()
         self._init_stt_warning_banner()
+        self._init_shared_chat_banner()
 
         # Style for alternating rows in treeviews
         style = ttk.Style(self)
@@ -3490,6 +3495,7 @@ class DBEditor(tk.Tk):
                     "Azure TTS Backup Voice",
                     "Audio Output Device",
                     "Default OpenAI Model",
+                    "Subtitles Style",
                 ]
                 inline_slider_keys = ["Elevenlabs TTS Volume", "Azure TTS Volume", "Sound FX Volume"]
                 inline_hidden_keys = set(inline_combobox_keys + inline_slider_keys)
@@ -4519,6 +4525,7 @@ class DBEditor(tk.Tk):
             "Azure TTS Backup Voice": AZURE_TTS_VOICES,
             "Audio Output Device": AUDIO_DEVICES,
             "Default OpenAI Model": openai_models,
+            "Subtitles Style": list(SubtitleOverlayServer.sub_styles),
         }
         combobox_labels = {
             "Default OpenAI Model": "Default GPT Model",
@@ -4781,6 +4788,33 @@ class DBEditor(tk.Tk):
                 suffix = row["key"][len(shared_prefix):].lstrip()
                 display_label = suffix or row["key"]
                 sr = _add_bool_row(section, row, sr, label_override=display_label)
+
+            def _toggle_shared_chat_now() -> None:
+                try:
+                    handler = get_reference("CommandHandler")
+                except Exception:
+                    handler = None
+                if not handler:
+                    messagebox.showwarning("Shared Chat", "CommandHandler is not available yet.", parent=self)
+                    return
+                try:
+                    new_value = not bool(getattr(handler, "shared_chat", False))
+                    coro = handler.toggle_shared_chat(new_value)
+                except Exception as exc:
+                    messagebox.showerror("Shared Chat", f"Failed to toggle shared chat: {exc}", parent=self)
+                    return
+                if not self._schedule_async_task(coro, "SharedChatToggle"):
+                    messagebox.showwarning("Shared Chat", "Unable to schedule shared chat toggle; bot loop not ready.", parent=self)
+                    return
+                try:
+                    self._update_shared_chat_toggle_button(new_value)
+                except Exception:
+                    pass
+
+            btn = tk.Button(section, command=_toggle_shared_chat_now)
+            btn.grid(row=sr, column=0, columnspan=2, sticky="we", padx=6, pady=(8, 2))
+            self._shared_chat_toggle_btn = btn
+            self._update_shared_chat_toggle_button()
 
     def _handle_setting_side_effect(self, key: str | None, value: str | None) -> None:
         """Apply runtime side effects for specific settings immediately after save."""
@@ -5121,6 +5155,12 @@ class DBEditor(tk.Tk):
             if self._stt_warning_job:
                 self.after_cancel(self._stt_warning_job)
                 self._stt_warning_job = None
+        except Exception:
+            pass
+        try:
+            if self._shared_chat_job:
+                self.after_cancel(self._shared_chat_job)
+                self._shared_chat_job = None
         except Exception:
             pass
         # Fire-and-forget the DB close so the GUI doesn't hang waiting for
@@ -5649,6 +5689,21 @@ class DBEditor(tk.Tk):
         self._stt_warning_label.place_forget()
         self._update_stt_warning_banner()
 
+    def _init_shared_chat_banner(self) -> None:
+        if self._shared_chat_label is not None:
+            return
+        self._shared_chat_label = tk.Label(
+            self,
+            text="Shared Chat Mode",
+            bg="#1f7a1f",
+            fg="white",
+            font=("Segoe UI", 10, "bold"),
+            padx=12,
+            pady=4,
+        )
+        self._shared_chat_label.place_forget()
+        self._update_shared_chat_banner()
+
     def _obs_connection_ready(self) -> bool:
         try:
             obs_manager = get_reference("OBSManager")
@@ -5690,6 +5745,18 @@ class DBEditor(tk.Tk):
                 return False
         return bool(getattr(stt_manager, "_listening", False))
 
+    def _shared_chat_active(self) -> bool:
+        try:
+            handler = get_reference("CommandHandler")
+        except Exception:
+            handler = None
+        if not handler:
+            return False
+        try:
+            return bool(getattr(handler, "shared_chat", False))
+        except Exception:
+            return False
+
     def _update_stt_warning_banner(self) -> None:
         label = self._stt_warning_label
         if label is None:
@@ -5700,6 +5767,32 @@ class DBEditor(tk.Tk):
         else:
             label.place_forget()
         self._stt_warning_job = self.after(400, self._update_stt_warning_banner)
+
+    def _update_shared_chat_banner(self) -> None:
+        label = self._shared_chat_label
+        if label is None:
+            return
+        active = self._shared_chat_active()
+        if active:
+            label.lift()
+            label.place(relx=1.0, rely=1.0, x=-16, y=-16, anchor="se")
+        else:
+            label.place_forget()
+        self._update_shared_chat_toggle_button(active)
+        self._shared_chat_job = self.after(1000, self._update_shared_chat_banner)
+
+    def _update_shared_chat_toggle_button(self, active: bool | None = None) -> None:
+        btn = self._shared_chat_toggle_btn
+        if not btn:
+            return
+        if active is None:
+            active = self._shared_chat_active()
+        text = "Shared Chat: ON" if active else "Shared Chat: OFF"
+        bg = "#1f7a1f" if active else "#b32626"
+        try:
+            btn.configure(text=text, bg=bg, fg="white", activebackground=bg, activeforeground="white")
+        except Exception:
+            pass
 
     def _build_users_tab(self) -> None:
         users_frame = ttk.Frame(self.nb)
