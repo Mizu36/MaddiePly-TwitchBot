@@ -590,6 +590,70 @@ class OBSWebsocketsManager:
         if self.subtitle_overlay:
             await asyncio.to_thread(self.subtitle_overlay.clear_state)
 
+    async def refresh_browser_sources(self, scene_name: Optional[str] = None) -> int:
+        """Refresh all browser sources in the target scene."""
+        if not self.ws:
+            return 0
+        try:
+            if not scene_name:
+                scene_name = self.ws.get_current_program_scene().current_program_scene_name
+            scene_items = self.ws.get_scene_item_list(scene_name)
+            input_list = await asyncio.to_thread(self.ws.send, "GetInputList", {})
+        except Exception as exc:
+            debug_print("OBSWebsocketsManager", f"Failed to load OBS inputs for refresh: {exc}")
+            return 0
+
+        input_map: Dict[str, str] = {}
+        try:
+            inputs = None
+            if hasattr(input_list, "inputs"):
+                inputs = input_list.inputs
+            elif isinstance(input_list, dict):
+                inputs = input_list.get("inputs")
+            if inputs:
+                for entry in inputs:
+                    if isinstance(entry, dict):
+                        name = entry.get("inputName") or entry.get("input_name")
+                        kind = entry.get("inputKind") or entry.get("input_kind") or ""
+                    else:
+                        name = getattr(entry, "inputName", None) or getattr(entry, "input_name", None)
+                        kind = getattr(entry, "inputKind", None) or getattr(entry, "input_kind", None) or ""
+                    if name:
+                        input_map[str(name)] = str(kind)
+        except Exception:
+            input_map = {}
+
+        refreshed = 0
+        items = getattr(scene_items, "scene_items", None) or getattr(scene_items, "sceneItems", None) or []
+        for item in items:
+            if isinstance(item, dict):
+                source_name = item.get("sourceName")
+            else:
+                source_name = getattr(item, "sourceName", None) or getattr(item, "source_name", None)
+            if not source_name:
+                continue
+            kind = input_map.get(source_name, "")
+            if "browser" not in str(kind).lower():
+                continue
+            try:
+                await asyncio.to_thread(
+                    self.ws.send,
+                    "PressInputPropertiesButton",
+                    {"inputName": source_name, "propertyName": "refreshnocache"},
+                )
+                refreshed += 1
+            except Exception:
+                try:
+                    await asyncio.to_thread(
+                        self.ws.send,
+                        "PressInputPropertiesButton",
+                        {"inputName": source_name, "propertyName": "refresh"},
+                    )
+                    refreshed += 1
+                except Exception as exc:
+                    debug_print("OBSWebsocketsManager", f"Failed to refresh browser source '{source_name}': {exc}")
+        return refreshed
+
     def _build_overlay_payload(self, text: str) -> Dict[str, Any]:
         lines: List[Dict[str, Any]] = []
         if text:
