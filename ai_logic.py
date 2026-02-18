@@ -38,7 +38,7 @@ class AssistantManager():
         self.online_database = get_reference("OnlineDatabase")
         self.twitch_bot = get_reference("TwitchBot")
         self.handler = get_reference("CommandHandler")
-        self.emotes = ['moddipOp', 'moddipLeave', 'moddipNUwUke', 'moddipCAT', 'moddipSlep', 'moddipUwU' ,'moddipGUN', 'moddipRage', 'moddipBlush', 'moddipHypers', 'moddipAlert', 'moddipRIP', 'moddipLOwOsion' ,'moddipOut', 'moddipJudge', 'moddipAYAYA', 'moddipSad', 'moddipS', 'moddipOggers', 'moddipWTF']
+        self.emotes = ['moddipLUL', 'moddipOp', 'moddipLeave', 'moddipAts', 'moddipLick', 'moddipLove', 'moddipNUwUke', 'moddipCAT', 'moddipSlep', 'moddipUwU' ,'moddipGUN', 'moddipRage', 'moddipBlush', 'moddipHYPE', 'moddipHypers', 'moddipAlert', 'moddipRIP', 'moddipLOwOsion' ,'moddipOut', 'moddipJudge', 'moddipAYAYA', 'moddipSad', 'moddipS', 'moddipOggers', 'moddipWTF', 'moddipEvilE4G', 'moddipPeeeerfect']
         self.latest_tts_result: TTSConversionResult | None = None
         self._ensure_models_loaded()
         debug_print("Assistant", "AssistantManager initialized.")
