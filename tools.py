@@ -36,7 +36,7 @@ async def set_debug(value) -> None:
     else:
         DEBUG = False
 
-def debug_print(module_name: str = None, text: str = None):
+def debug_print(module_name: str = None, text: str = None, print_type: str = "None") -> None:
     if not module_name or not text:
         print("debug_print called without required parameters.")
         return
@@ -45,6 +45,12 @@ def debug_print(module_name: str = None, text: str = None):
         text = "This module forgot to include the module name."
     if DEBUG:
         print(f"[{time}][DEBUG][{module_name}] {text}")
+    if module_name in ["Database", "GUI", "Tools"]:
+        if print_type == "ERROR":
+            append_log_file(f"[{time}][ERROR][{module_name}] {text}")
+        else:
+            return
+    append_log_file(f"[{time}][DEBUG][{module_name}] {text}")
 
 def get_random_number(min: int, max: int) -> int:
     return random.randint(min, max)
@@ -233,3 +239,21 @@ def get_reference(name: Literal["TwitchBot", "ResponseTimer", "DiscordBot", "Ele
         if not GACHA_OVERLAY:
             debug_print("Tools", "GachaOverlay reference requested but not set.")
         return GACHA_OVERLAY
+    
+
+def append_log_file(text: str) -> None:
+    """Appends a log file with the current date and time."""
+    log_folder = path_from_app_root("logs")
+    log_folder.mkdir(exist_ok=True)
+    log_file = log_folder / "log.txt"
+    with log_file.open("a", encoding="utf-8") as f:
+        f.write(text + "\n")
+
+def clear_log_file() -> None:
+    """Clears the log file."""
+    log_folder = path_from_app_root("logs")
+    log_folder.mkdir(exist_ok=True)
+    log_file = log_folder / "log.txt"
+    log = log_file.open("w")
+    log.write("Log started at " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n")
+    log.close()
