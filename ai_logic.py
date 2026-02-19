@@ -166,7 +166,7 @@ class AssistantManager():
                         # Skip malformed entries
                         continue
             except Exception as e:
-                print(f"Error iterating message history: {e}")
+                debug_print("Assistant", f"Error iterating message history: {e}")
         else:
             debug_print("Assistant", "Twitch bot message history is empty or unavailable.")
         summary_prompt = await get_prompt("Summarize Chat")
