@@ -9,7 +9,7 @@ from db import setup_database, get_all_commands, get_setting
 from online_db import OnlineDatabase
 from google_api import add_quote, get_quote, get_random_quote, get_random_quote_containing_words
 import asqlite
-from twitchio import eventsub, HTTPException
+from twitchio import eventsub, HTTPException, web
 from twitchio.ext import commands
 from ai_logic import AssistantManager, AutoMod, ResponseTimer, EventManager, setup_gpt_manager
 from message_scheduler import MessageScheduler
@@ -71,6 +71,13 @@ class Bot(commands.AutoBot):
         debug_print("AutoBot", f"Initializing bot with prefix: {prefix} and subscriptions: {subs}")
         self.custom_commands = {}
 
+        adapter_port_raw = _sanitize_env_value(os.getenv("TWITCHIO_WEB_PORT", ""))
+        try:
+            adapter_port = int(adapter_port_raw) if adapter_port_raw else 4344
+        except ValueError:
+            adapter_port = 4344
+        adapter = web.AiohttpAdapter(port=adapter_port)
+
         super().__init__(
             client_id=client_id_env,
             client_secret=client_secret_env,
@@ -78,7 +85,8 @@ class Bot(commands.AutoBot):
             owner_id=owner_id_env,
             prefix=prefix,
             subscriptions=subs,
-            force_subscribe=True
+            force_subscribe=True,
+            adapter=adapter,
         )
         debug_print("AutoBot", "AutoBot initialized.")
 
@@ -393,7 +401,7 @@ class CommandHandler(commands.Component):
         self.users_to_greet = []
         self.message_history = []
         self.discord_bot = None
-        self.whisper_commands = ["!connectdiscord", "!confirmdiscord", "!disconnectdiscord", "!setdefaultvoice", "!getvoices", "!setchime", "!getchimes", "!commands", "!help", "!mystats"]
+        self.whisper_commands = ["!connectdiscord", "!confirmdiscord", "!disconnectdiscord", "!setdefaultvoice", "!getvoices", "!commands", "!help", "!mystats"]
         for name, spec in self.bot.custom_commands.items():
             self.register_custom_command(name, spec)
         asyncio.create_task(self.scheduler.start_scheduled_messages())
@@ -640,6 +648,15 @@ class CommandHandler(commands.Component):
                 increment = None
                 if not self.shared_chat or self.shared_chat_message_scheduler: # Increment message count if not in shared chat or if shared chat message scheduler is enabled
                     increment = asyncio.create_task(self.scheduler.increment_message_count())
+                if not self.first_user_greeted and user_name not in self.ignored_users: #Plays user chosen soundfx if enabled and they have a soundfx set and is the first user to chat
+                    if await get_setting("First Chat of Stream Chime Enabled", True):
+                        chime_name = await self.online_database.get_specific_user_data(twitch_user_id=user_id, field="chime")
+                        if chime_name and chime_name != None:
+                            if not self.audio_manager:
+                                self.audio_manager = get_reference("AudioManager")
+                            await self.audio_manager.play_sound_fx_by_name(chime_name)
+                        else:
+                            pass
                 if await get_setting("Welcome Viewers Enabled", True):
                     if (not self.shared_chat) or (self.shared_chat and self.shared_chat_welcome): # Greet user if not in shared chat mode and welcome viewers is enabled or if shared chat welcome is enabled
                         if user_name not in self.welcomed_users and user_name not in self.users_to_greet:
@@ -820,38 +837,6 @@ class CommandHandler(commands.Component):
             #voices: list = azure_manager.get_list_of_voices()
             voice_list = ", ".join(voices)
             await self.bot.whisper(payload.sender, f"Available voices are: {voice_list}")
-            return
-        elif message_parts[0].lower() == "!setchime":
-            if len(message_parts) < 2:
-                debug_print("CommandHandler", "No chime option provided in whisper.")
-                await self.bot.whisper(payload.sender, "Please provide the name of the chime you want to play, 'on' to play a random chime, or 'off' to disable chimes altogether. Usage: !setchime <name/on/off>. Note: Do not include file extensions.")
-                return
-            chime_option = message_parts[1].lower()
-            if chime_option.lower() == "off":
-                debug_print("CommandHandler", "Invalid chime option provided in whisper.")
-                data = {"chime": "off"}
-                await self.online_database.create_user(payload.sender.id, data)
-                await self.bot.whisper(payload.sender, "Your chime has been disabled.")
-                return
-            if not self.audio_manager:
-                self.audio_manager = get_reference("AudioManager")
-            if "." in chime_option:
-                chime_option = chime_option.rsplit(".", 1)[0]
-            if await self.audio_manager.check_sound_fx_exists(chime_option):
-                data = {"chime": chime_option.lower()}
-                await self.online_database.create_user(payload.sender.id, data)
-            else:
-                debug_print("CommandHandler", "Invalid chime option provided in whisper.")
-                await self.bot.whisper(payload.sender, f"The chime '{chime_option}' does not exist. Please check the available chimes and try again. Note: Do not include file extensions. Name is NOT case-sensitive.")
-                return
-            await self.bot.whisper(payload.sender, f"Your TTS chime preference has been set to: {chime_option}")
-            return
-        elif message_parts[0].lower() == "!getchimes":
-            if not self.audio_manager:
-                self.audio_manager = get_reference("AudioManager")
-            chime_list = await self.audio_manager.get_list_of_sound_fx()
-            chime_list_str = ", ".join(chime_list)
-            await self.bot.whisper(payload.sender, f"Available chimes are: {chime_list_str}. Use !setchime <name> to set your preferred chime. Join the discord to suggest more chimes.")
             return
         elif message_parts[0].lower() == "!mystats":
             user_data = await self.online_database.get_user_data(twitch_user_id=payload.sender.id)
@@ -1523,10 +1508,14 @@ def main() -> None:
             prefix = await get_setting("Command Prefix", "!")
 
             async with Bot(database=tdb, subs=subs, prefix=prefix) as bot:
-                for pair in tokens:
-                    await bot.add_token(*pair)
-                set_reference("TwitchBot", bot)
-                await bot.start(load_tokens=False)
+                try:
+                    for pair in tokens:
+                        await bot.add_token(*pair)
+                    set_reference("TwitchBot", bot)
+                    await bot.start(load_tokens=False)
+                except Exception as e:
+                    debug_print(f"Failed to start Twitch bot: {e}")
+                    
 
     try:
         asyncio.run(runner())
