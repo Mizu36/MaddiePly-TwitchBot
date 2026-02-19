@@ -7,6 +7,13 @@ start_bot.bat logic so we no longer need to provision Python/venv on end-user ma
 
 from __future__ import annotations
 
+from tools import clear_log_file as _clear_log_file
+
+try:
+    _clear_log_file()
+except Exception:
+    pass
+
 import asyncio
 import os
 import sqlite3
@@ -546,6 +553,12 @@ def main() -> None:
     maybe_hide_console()
 
     if RUN_MAIN_FLAG in sys.argv:
+        try:
+            from oauth_server import start_background_server
+
+            start_background_server()
+        except Exception as exc:
+            _warn(f"Unable to start OAuth server: {exc}")
         _launch_primary_gui()
         return
 

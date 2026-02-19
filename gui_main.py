@@ -1,6 +1,9 @@
 import os
 import sys
+import socket
 import threading
+import urllib.parse
+import webbrowser
 import sqlite3
 import asyncio
 import datetime
@@ -13,6 +16,7 @@ from tkinter import ttk, messagebox, simpledialog
 import tkinter.font as tkfont
 from tkinter.scrolledtext import ScrolledText
 import textwrap
+from dotenv import load_dotenv
 from db import (
     save_location_capture,
     get_setting,
@@ -33,11 +37,46 @@ from tools import set_debug, debug_print, get_random_number, get_reference, path
 import typing
 import testing
 from online_db import OnlineDatabase
+from oauth_server import stop_background_server
 
 # Pending coroutines that need to be scheduled on the DB/bot loop when it
 # becomes available. Stored as list of (coro, description) for debugging.
 _PENDING_HOTKEY_COROS: list = []
 _PENDING_HOTKEY_LOCK = threading.Lock()
+
+BOT_OAUTH_URL_TEMPLATE = (
+    "https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=YOUR_CLIENT_ID&"
+    "redirect_uri=http%3A%2F%2Flocalhost%3A4343%2Foauth&scope=user:read:chat%20user:write:chat%20"
+    "user:bot%20user:manage:whispers%20moderator:manage:banned_users%20moderator:read:followers%20"
+    "moderator:read:suspicious_users%20moderator:manage:shield_mode%20moderator:manage:shoutouts%20"
+    "moderator:manage:automod%20moderator:manage:chat_settings%20bits:read%20channel:read:hype_train&"
+    "force_verify=true"
+)
+BROADCASTER_OAUTH_URL_TEMPLATE = (
+    "https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=YOUR_CLIENT_ID&"
+    "redirect_uri=http%3A%2F%2Flocalhost%3A4343%2Foauth&scope=channel:read:subscriptions%20"
+    "channel:manage:redemptions%20channel:read:charity%20channel:read:goals%20"
+    "channel:manage:polls%20channel:manage:predictions%20channel:bot%20channel:edit:commercial%20"
+    "channel:read:ads%20bits:read%20channel:read:hype_train&force_verify=true"
+)
+
+
+def _get_twitch_client_id() -> str:
+    env_path = path_from_app_root(".env")
+    load_dotenv(dotenv_path=env_path, override=True)
+    return (os.getenv("TWITCH_CLIENT_ID", "") or "").strip()
+
+
+def _open_oauth_url(template: str) -> None:
+    client_id = _get_twitch_client_id()
+    if not client_id:
+        messagebox.showerror(
+            "OAuth",
+            "TWITCH_CLIENT_ID is missing in .env. Please fill it in and try again.",
+        )
+        return
+    url = template.replace("YOUR_CLIENT_ID", urllib.parse.quote(client_id, safe=""))
+    webbrowser.open(url)
 
 def _start_pending_coros_poller(timeout: float = 15.0, poll_interval: float = 0.2):
     """Background thread that waits for the DB event loop and schedules pending coroutines.
@@ -72,6 +111,8 @@ def _start_pending_coros_poller(timeout: float = 15.0, poll_interval: float = 0.
                 _PENDING_HOTKEY_COROS.clear()
 
     threading.Thread(target=_poller, daemon=True).start()
+
+
 from hotkey_listener import GlobalHotkeyListener, set_global_listener, get_global_listener
 
 
@@ -429,7 +470,7 @@ class DBEditor(tk.Tk):
         try:
             self._evaluate_google_credentials()
         except Exception as exc:
-            debug_print("GUI", f"Google Sheets credential validation failed: {exc}")
+            debug_print("GUI", f"Google Sheets credential validation failed: {exc}", "ERROR")
         try:
             try:
                 audio_manager = get_reference("AudioManager")
@@ -441,7 +482,7 @@ class DBEditor(tk.Tk):
                 AUDIO_DEVICES.extend(devices)
             debug_print("GUI", f"Discovered audio devices: {AUDIO_DEVICES}")
         except Exception as e:
-            debug_print("GUI", f"Error listing audio devices: {e}")
+            debug_print("GUI", f"Error listing audio devices: {e}", "ERROR")
 
         try:
             def _fetch_elevenlabs_models():
@@ -487,11 +528,11 @@ class DBEditor(tk.Tk):
                         ELEVEN_LABS_VOICE_MODELS.extend(normalized)
                         debug_print("GUI", f"Discovered Elevenlabs synthesizer models ({len(ELEVEN_LABS_VOICE_MODELS)}): {ELEVEN_LABS_VOICE_MODELS}")
                     else:
-                        debug_print("GUI", "No Elevenlabs models returned (empty list).")
+                        debug_print("GUI", "No Elevenlabs models returned (empty list).", "ERROR")
                 except Exception as e:
                     import traceback
-                    print("[GUI] Error listing Elevenlabs synthesizer models:")
-                    print(traceback.format_exc())
+                    debug_print("GUI", "Error listing Elevenlabs synthesizer models:", "ERROR")
+                    debug_print("GUI", traceback.format_exc(), "ERROR")
 
                 # After updating the global list, refresh inline controls on the
                 # main thread so any comboboxes get rebuilt with new options.
@@ -503,10 +544,10 @@ class DBEditor(tk.Tk):
             try:
                 threading.Thread(target=_fetch_elevenlabs_models, daemon=True).start()
             except Exception as e:
-                debug_print("GUI", f"Failed to start thread to fetch Elevenlabs models: {e}")
+                debug_print("GUI", f"Failed to start thread to fetch Elevenlabs models: {e}", "ERROR")
         except Exception as e:
             # Outer guard to match original structure — log any unexpected errors
-            debug_print("GUI", f"Error while initiating Elevenlabs models fetch: {e}")
+            debug_print("GUI", f"Error while initiating Elevenlabs models fetch: {e}", "ERROR")
 
         try:
             azure_manager = get_reference("SpeechToTextManager")
@@ -521,7 +562,7 @@ class DBEditor(tk.Tk):
                 AZURE_TTS_VOICES.clear()
                 AZURE_TTS_VOICES.extend(voices)
         except Exception as e:
-            debug_print("GUI", f"Error getting SpeechToTextManager voices: {e}")
+            debug_print("GUI", f"Error getting SpeechToTextManager voices: {e}", "ERROR")
 
         for tbl, label in self.tables:
             frame = ttk.Frame(self.nb)
@@ -532,7 +573,7 @@ class DBEditor(tk.Tk):
         try:
             self._build_users_tab()
         except Exception as e:
-            debug_print("GUI", f"Failed to build Twitch Users tab: {e}")
+            debug_print("GUI", f"Failed to build Twitch Users tab: {e}", "ERROR")
 
         # Tools tab
         tools_frame = ttk.Frame(self.nb)
@@ -568,6 +609,23 @@ class DBEditor(tk.Tk):
             command=self._handle_obs_reconnect_click,
         )
         btn_reconnect_obs.pack(side=tk.LEFT, padx=4)
+
+        oauth_row = ttk.Frame(tools_frame)
+        oauth_row.pack(fill=tk.X, padx=6, pady=(0, 6))
+
+        btn_oauth_bot = ttk.Button(
+            oauth_row,
+            text="Authorize Bot OAuth",
+            command=lambda: _open_oauth_url(BOT_OAUTH_URL_TEMPLATE),
+        )
+        btn_oauth_bot.pack(side=tk.LEFT, padx=4)
+
+        btn_oauth_broadcaster = ttk.Button(
+            oauth_row,
+            text="Authorize Broadcaster OAuth",
+            command=lambda: _open_oauth_url(BROADCASTER_OAUTH_URL_TEMPLATE),
+        )
+        btn_oauth_broadcaster.pack(side=tk.LEFT, padx=4)
 
         # Scrollable body so long tool groups remain accessible at smaller window sizes.
         tools_body = ttk.Frame(tools_frame)
@@ -864,7 +922,7 @@ class DBEditor(tk.Tk):
             except Exception:
                 pass
         except Exception:
-            debug_print("GUI", "Failed to start global hotkey listener.")
+            debug_print("GUI", "Failed to start global hotkey listener.", "ERROR")
 
         # Randomizer tab
         try:
@@ -965,7 +1023,7 @@ class DBEditor(tk.Tk):
             except Exception:
                 pass
         except Exception:
-            debug_print("GUI", "Failed to initialize Randomizer tab")
+            debug_print("GUI", "Failed to initialize Randomizer tab", "ERROR")
 
         # Custom Redemption Builder tab
         try:
@@ -1070,7 +1128,7 @@ class DBEditor(tk.Tk):
 
             threading.Thread(target=_start_background_refresh, daemon=True).start()
         except Exception:
-            debug_print("GUI", "Failed to initialize Custom Redemption Builder tab")
+            debug_print("GUI", "Failed to initialize Custom Redemption Builder tab", "ERROR")
 
         # Event Manager tab
         try:
@@ -1110,17 +1168,17 @@ class DBEditor(tk.Tk):
                             asyncio.run_coroutine_threadsafe(coro, db_loop)
                             return True
                         except Exception as e:
-                            debug_print("GUIEvent", f"run_coroutine_threadsafe failed: {e}")
+                            debug_print("GUIEvent", f"run_coroutine_threadsafe failed: {e}", "ERROR")
                 except Exception:
                     pass
-                debug_print("GUIEvent", "No DB loop available to schedule event manager coroutine")
+                debug_print("GUIEvent", "No DB loop available to schedule event manager coroutine", "ERROR")
                 return False
 
             def _refresh_event_tab():
                 try:
                     evm = get_reference("EventManager")
                     if not evm:
-                        debug_print("GUIEvent", "EventManager reference not available for refresh.")
+                        debug_print("GUIEvent", "EventManager reference not available for refresh.", "ERROR")
                         return
                     queued_sel = queued_list.curselection()
                     queued_sel_idx = queued_sel[0] if queued_sel else None
@@ -1162,14 +1220,14 @@ class DBEditor(tk.Tk):
                     _restore_selection(queued_list, queued_sel_idx, queued_sel_text)
                     _restore_selection(played_list, played_sel_idx, played_sel_text)
                 except Exception as e:
-                    debug_print("GUIEvent", f"Error refreshing event tab: {e}")
+                    debug_print("GUIEvent", f"Error refreshing event tab: {e}", "ERROR")
 
             # Attach helper methods to self so buttons can reference them
             def _event_play_selected(played_override: bool | None = None, index_override: int | None = None):
                 try:
                     evm = get_reference("EventManager")
                     if not evm:
-                        debug_print("GUIEvent", "EventManager not available for play action")
+                        debug_print("GUIEvent", "EventManager not available for play action", "ERROR")
                         return
                     if index_override is not None and played_override is not None:
                         idx = index_override
@@ -1186,13 +1244,13 @@ class DBEditor(tk.Tk):
                     coro = evm.play_specific(played, idx)
                     _schedule_on_db(coro)
                 except Exception as e:
-                    debug_print("GUIEvent", f"Error scheduling play/replay action: {e}")
+                    debug_print("GUIEvent", f"Error scheduling play/replay action: {e}", "ERROR")
 
             def _event_delete_selected():
                 try:
                     evm = get_reference("EventManager")
                     if not evm:
-                        debug_print("GUIEvent", "EventManager not available for delete action")
+                        debug_print("GUIEvent", "EventManager not available for delete action", "ERROR")
                         return
                     # prefer queued selection, otherwise played
                     sel = queued_list.curselection()
@@ -1211,13 +1269,13 @@ class DBEditor(tk.Tk):
                     else:
                         _refresh_event_tab()
                 except Exception as e:
-                    debug_print("GUIEvent", f"Error scheduling delete action: {e}")
+                    debug_print("GUIEvent", f"Error scheduling delete action: {e}", "ERROR")
 
             def _event_clear_and_refresh():
                 try:
                     evm = get_reference("EventManager")
                     if not evm:
-                        debug_print("GUIEvent", "EventManager not available for clear action")
+                        debug_print("GUIEvent", "EventManager not available for clear action", "ERROR")
                         return
                     coro = evm.clear_events()
                     futok = _schedule_on_db(coro)
@@ -1226,7 +1284,7 @@ class DBEditor(tk.Tk):
                     else:
                         _refresh_event_tab()
                 except Exception as e:
-                    debug_print("GUIEvent", f"Error scheduling clear action: {e}")
+                    debug_print("GUIEvent", f"Error scheduling clear action: {e}", "ERROR")
 
             def _bind_double_click(listbox: tk.Listbox, played_flag: bool):
                 def _on_double_click(event):
@@ -1250,16 +1308,17 @@ class DBEditor(tk.Tk):
                 finally:
                     try:
                         self._event_tab_refresh_job = self.after(3000, _poll_event_lists)
-                    except Exception:
+                    except Exception as e:
+                        debug_print("GUI", f"Error scheduling event tab refresh: {e}", "ERROR")
                         self._event_tab_refresh_job = None
 
             try:
                 _refresh_event_tab()
                 self._event_tab_refresh_job = self.after(3000, _poll_event_lists)
-            except Exception:
-                pass
-        except Exception:
-            debug_print("GUI", "Failed to initialize Event Manager tab")
+            except Exception as e:
+                debug_print("GUI", f"Failed to initialize Event Manager tab: {e}", "ERROR")
+        except Exception as e:
+            debug_print("GUI", f"Failed to initialize Event Manager tab: {e}", "ERROR")
 
         # Create Console tab as the last tab so it appears at the end of the Notebook.
         try:
@@ -1270,10 +1329,10 @@ class DBEditor(tk.Tk):
             try:
                 sys.stdout = ConsoleRedirector(self.console_text)
                 sys.stderr = ConsoleRedirector(self.console_text)
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as e:
+                debug_print("GUI", f"Failed to redirect console output: {e}", "ERROR")
+        except Exception as e:
+            debug_print("GUI", f"Failed to initialize Console tab: {e}", "ERROR")
 
         self._apply_tab_order()
 
@@ -1305,12 +1364,12 @@ class DBEditor(tk.Tk):
                     continue
                 self.nb.insert(index, tab_id)
         except Exception as exc:
-            debug_print("GUI", f"Failed to apply tab order: {exc}")
+            debug_print("GUI", f"Failed to apply tab order: {exc}", "ERROR")
 
     def _schedule_async_task(self, coro: typing.Awaitable[typing.Any] | None, source: str = "GUITesting") -> bool:
         """Attempt to schedule a coroutine on the bot/database loop."""
         if coro is None:
-            debug_print(source, "No coroutine provided for scheduling.")
+            debug_print(source, "No coroutine provided for scheduling.", "ERROR")
             return False
         loops: list = []
         try:
@@ -1334,7 +1393,7 @@ class DBEditor(tk.Tk):
                 debug_print(source, "Scheduled coroutine on running loop.")
                 return True
             except Exception as exc:
-                debug_print(source, f"Failed to schedule coroutine: {exc}")
+                debug_print(source, f"Failed to schedule coroutine: {exc}", "ERROR")
         return False
 
     def _run_testing_helper(
@@ -1345,7 +1404,7 @@ class DBEditor(tk.Tk):
         try:
             coro = coro_factory()
         except Exception as exc:
-            debug_print("GUITesting", f"Failed to prepare '{label}' test: {exc}")
+            debug_print("GUITesting", f"Failed to prepare '{label}' test: {exc}", "ERROR")
             messagebox.showerror("Event Simulation", f"Could not prepare '{label}' test.\n{exc}")
             return
         if not self._schedule_async_task(coro, f"GUITesting::{label}"):
@@ -1627,7 +1686,7 @@ class DBEditor(tk.Tk):
             target_var.set(previous_value)
         if self.gacha_widgets:
             self.gacha_widgets["status_var"].set("Update failed. See details below.")
-        debug_print("GUI", f"Gacha update failed: {message}")
+        debug_print("GUI", f"Gacha update failed: {message}", "ERROR")
         messagebox.showerror("Gacha Update Failed", f"Unable to update gacha data.\n{message}")
 
     def _after_set_toggle_success(
@@ -2529,11 +2588,11 @@ class DBEditor(tk.Tk):
             # center the dialog
             try:
                 self.center_window(dlg)
-            except Exception:
-                pass
+            except Exception as e:
+                debug_print("GUI", f"Failed to center custom redemption editor: {e}", "ERROR")
 
         except Exception as e:
-            debug_print("GUI", f"open_custom_redemption_editor error: {e}")
+            debug_print("GUI", f"open_custom_redemption_editor error: {e}", "ERROR")
 
         # Console tab was created earlier to capture startup logs
 
@@ -2559,9 +2618,9 @@ class DBEditor(tk.Tk):
             x = px + max(0, (pw - ww) // 2)
             y = py + max(0, (ph - wh) // 2)
             win.geometry(f"+{x}+{y}")
-        except Exception:
+        except Exception as e:
             # best-effort; ignore failures so dialogs still appear
-            pass
+            debug_print("GUI", f"Failed to center window: {e}", "ERROR")
 
     def _evaluate_google_credentials(self) -> None:
         """Validate credentials.json and disable Google Sheets integration when invalid."""
@@ -2607,11 +2666,11 @@ class DBEditor(tk.Tk):
                 cur = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
                 row = cur.fetchone()
             except sqlite3.Error as exc:
-                debug_print("GUI", f"Unable to read setting '{key}': {exc}")
+                debug_print("GUI", f"Unable to read setting '{key}': {exc}", "ERROR")
                 return
 
             if row is None:
-                debug_print("GUI", f"Setting '{key}' not found while enforcing Google Sheets requirement.")
+                debug_print("GUI", f"Setting '{key}' not found while enforcing Google Sheets requirement.", "ERROR")
                 return
 
             try:
@@ -2620,7 +2679,7 @@ class DBEditor(tk.Tk):
                 current_val = str(row[0]) if len(row) else ""
 
             if current_val in ("0", "False", "false"):
-                debug_print("GUI", f"'{key}' already disabled due to invalid credentials.")
+                debug_print("GUI", f"'{key}' already disabled due to invalid credentials.", "ERROR")
                 return
 
             conn.execute(
@@ -2628,11 +2687,11 @@ class DBEditor(tk.Tk):
                 (key,),
             )
             conn.commit()
-            debug_print("GUI", f"Automatically disabled '{key}': {reason}")
+            debug_print("GUI", f"Automatically disabled '{key}': {reason}", "ERROR")
         except sqlite3.Error as exc:
-            debug_print("GUI", f"Unable to disable '{key}': {exc}")
+            debug_print("GUI", f"Unable to disable '{key}': {exc}", "ERROR")
         except Exception as exc:
-            debug_print("GUI", f"Unexpected error disabling '{key}': {exc}")
+            debug_print("GUI", f"Unexpected error disabling '{key}': {exc}", "ERROR")
         finally:
             if conn is not None:
                 try:
@@ -2907,7 +2966,7 @@ class DBEditor(tk.Tk):
                 cur2 = conn.execute("SELECT response, enabled, sub_only, mod_only, reply_to_user FROM commands WHERE command = ?", (cmd_name,))
                 r2 = cur2.fetchone()
                 if not r2:
-                    debug_print("GUI", f"No DB row found for {cmd_name}.")
+                    debug_print("GUI", f"No DB row found for {cmd_name}.", "ERROR")
                     return
                 
                 response, enabled, sub_only, mod_only, reply_to_user = r2
@@ -2930,10 +2989,10 @@ class DBEditor(tk.Tk):
                             _rem_cmd(cmd_name)
                             _add_cmd(cmd_name, response, sub_only, mod_only, reply_to_user)
                 except KeyError:
-                    debug_print("GUI", f"Tried to remove '{cmd_name}' but it wasn’t registered yet.")
+                    debug_print("GUI", f"Tried to remove '{cmd_name}' but it wasn’t registered yet.", "ERROR")
                     pass
                 except Exception as e:
-                    debug_print("GUI", f"Error syncing enabled toggle for {cmd_name}: {repr(e)}")
+                    debug_print("GUI", f"Error syncing enabled toggle for {cmd_name}: {repr(e)}", "ERROR")
                 finally:
                     conn.close()
 
@@ -2941,8 +3000,8 @@ class DBEditor(tk.Tk):
                 # refresh commands table to reflect change
                 try:
                     self.refresh_table("commands")
-                except Exception:
-                    pass
+                except Exception as e:
+                    debug_print("GUI", f"Error refreshing commands table: {repr(e)}", "ERROR")
 
             try:
                 tree.bind("<Button-1>", on_tree_click)
@@ -2998,25 +3057,25 @@ class DBEditor(tk.Tk):
                         try:
                             self._scheduler_call_start(int(row_id))
                         except Exception as e:
-                            debug_print("GUI", f"Failed to start scheduled message: {e}")
+                            debug_print("GUI", f"Failed to start scheduled message: {e}", "ERROR")
                     else:
                         debug_print("GUI", f"Stopping scheduled message id={row_id}")
                         try:
                             self._scheduler_call_end(int(row_id))
                         except Exception as e:
-                            debug_print("GUI", f"Failed to end scheduled message: {e}")
-                except Exception:
-                    pass
+                            debug_print("GUI", f"Failed to end scheduled message: {e}", "ERROR")
+                except Exception as e:
+                    debug_print("GUI", f"Error handling scheduled message toggle: {e}", "ERROR")
 
                 try:
                     self.refresh_table("scheduled_messages")
-                except Exception:
-                    pass
+                except Exception as e:
+                    debug_print("GUI", f"Error refreshing scheduled messages table: {repr(e)}", "ERROR")
 
             try:
                 tree.bind("<Button-1>", on_sched_click)
-            except Exception:
-                pass
+            except Exception as e:
+                debug_print("GUI", f"Error binding scheduled messages click event: {repr(e)}", "ERROR")
 
             # selection -> update preview
             def _on_select(event, t=tree, preview=preview_widget):
@@ -3247,8 +3306,8 @@ class DBEditor(tk.Tk):
                 for rid in sel_ids:
                     try:
                         conn.execute("DELETE FROM custom_rewards WHERE id = ?", (rid,))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        debug_print("GUI", f"Error deleting custom redemption: {e}", "ERROR")
                 conn.commit()
             except Exception as e:
                 messagebox.showerror("DB", f"Failed to delete redemption(s): {e}", parent=self)
@@ -3256,19 +3315,20 @@ class DBEditor(tk.Tk):
                 try:
                     if conn:
                         conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    debug_print("GUI", f"Error closing database connection: {e}", "ERROR")
 
             # Refresh UI
             try:
                 threading.Thread(target=self.refresh_custom_redemptions, daemon=True).start()
-            except Exception:
+            except Exception as e:
+                debug_print("GUI", f"Error starting refresh thread: {e}", "ERROR")  
                 try:
                     self.refresh_custom_redemptions()
-                except Exception:
-                    pass
+                except Exception as e:
+                    debug_print("GUI", f"Error refreshing custom redemptions: {e}", "ERROR")
         except Exception as e:
-            debug_print("GUI", f"delete_selected_custom_redemption error: {e}")
+            debug_print("GUI", f"delete_selected_custom_redemption error: {e}", "ERROR")
 
     def toggle_selected_custom_redemption(self) -> None:
         """Toggle the `is_enabled` flag on the selected custom redemption(s).
@@ -3290,8 +3350,8 @@ class DBEditor(tk.Tk):
                             rid = bits_rows[idx].get("id")
                             if rid is not None:
                                 sel_ids.append(int(rid))
-            except Exception:
-                pass
+            except Exception as e:
+                debug_print("GUI", f"Error selecting custom redemption: {e}", "ERROR")
 
             if not sel_ids:
                 try:
@@ -3302,8 +3362,8 @@ class DBEditor(tk.Tk):
                                 rid = cp_rows[idx].get("id")
                                 if rid is not None:
                                     sel_ids.append(int(rid))
-                except Exception:
-                    pass
+                except Exception as e:
+                    debug_print("GUI", f"Error selecting custom redemption: {e}", "ERROR")
 
             if not sel_ids:
                 messagebox.showinfo("Enable/Disable", "Please select a redemption to enable/disable.", parent=self)
@@ -3390,9 +3450,9 @@ class DBEditor(tk.Tk):
                 try:
                     self.refresh_custom_redemptions()
                 except Exception:
-                    pass
+                    debug_print("GUI", f"Error refreshing custom redemptions: {e}", "ERROR")
         except Exception as e:
-            debug_print("GUI", f"toggle_selected_custom_redemption error: {e}")
+            debug_print("GUI", f"toggle_selected_custom_redemption error: {e}", "ERROR")
 
     def get_table_info(self, table: str):
         debug_print("GUI", f"Getting table info for '{table}'")
@@ -4160,7 +4220,7 @@ class DBEditor(tk.Tk):
                                 try:
                                     self._scheduler_call_start(int(new_id))
                                 except Exception as e:
-                                    debug_print("GUI", f"Error starting scheduled message: {e}")
+                                    debug_print("GUI", f"Error starting scheduled message: {e}", "ERROR")
                             return
                         except Exception as e:
                             try:
@@ -4888,10 +4948,10 @@ class DBEditor(tk.Tk):
             try:
                 coro = handler.start_gacha_system() if should_enable else handler.end_gacha_system()
             except Exception as exc:
-                debug_print("GUI", f"Unable to prepare gacha coroutine: {exc}")
+                debug_print("GUI", f"Unable to prepare gacha coroutine: {exc}", "ERROR")
                 return
             if not self._schedule_async_task(coro, "GachaSystemToggle"):
-                debug_print("GUI", "Failed to schedule gacha system update after toggle.")
+                debug_print("GUI", "Failed to schedule gacha system update after toggle.", "ERROR")
             return
 
         if key == "Event Queue Enabled":
@@ -4909,18 +4969,18 @@ class DBEditor(tk.Tk):
                     else event_manager.start_event_timer()
                 )
             except Exception as exc:
-                debug_print("GUI", f"Unable to create EventManager coroutine: {exc}")
+                debug_print("GUI", f"Unable to create EventManager coroutine: {exc}", "ERROR")
                 return
             scheduled = self._schedule_async_task(coro, source="GUISettings")
             if not scheduled:
-                debug_print("GUI", "Failed to schedule EventManager coroutine after Event Queue toggle.")
+                debug_print("GUI", "Failed to schedule EventManager coroutine after Event Queue toggle.", "ERROR")
             return
 
         if key == "Seconds Between Events":
             try:
                 new_time = int(str(value).strip())
             except (TypeError, ValueError):
-                debug_print("GUI", "Seconds Between Events change ignored due to invalid value.")
+                debug_print("GUI", "Seconds Between Events change ignored due to invalid value.", "ERROR")
                 return
 
             queue_enabled = False
@@ -4936,7 +4996,7 @@ class DBEditor(tk.Tk):
                     normalized_flag = str(row["value"]).strip().lower()
                     queue_enabled = normalized_flag in ("1", "true", "t", "yes", "y", "on")
             except Exception as exc:
-                debug_print("GUI", f"Failed to read Event Queue Enabled flag: {exc}")
+                debug_print("GUI", f"Failed to read Event Queue Enabled flag: {exc}", "ERROR")
             finally:
                 if conn is not None:
                     conn.close()
@@ -4954,11 +5014,11 @@ class DBEditor(tk.Tk):
             try:
                 coro = event_manager.update_time_between_events(new_time)
             except Exception as exc:
-                debug_print("GUI", f"Unable to create EventManager update coroutine: {exc}")
+                debug_print("GUI", f"Unable to create EventManager update coroutine: {exc}", "ERROR")
                 return
             scheduled = self._schedule_async_task(coro, source="GUISettings")
             if not scheduled:
-                debug_print("GUI", "Failed to schedule EventManager update after Seconds Between Events change.")
+                debug_print("GUI", "Failed to schedule EventManager update after Seconds Between Events change.", "ERROR")
             return
         # No additional side effects registered for other keys.
         return
@@ -4975,10 +5035,10 @@ class DBEditor(tk.Tk):
         try:
             coro = handler.set_shared_chat_settings()
         except Exception as exc:
-            debug_print("GUI", f"Failed to prepare shared chat settings update: {exc}")
+            debug_print("GUI", f"Failed to prepare shared chat settings update: {exc}", "ERROR")
             return
         if not self._schedule_async_task(coro, "SharedChatSettings"):
-            debug_print("GUI", "Unable to schedule shared chat settings update; bot loop not ready.")
+            debug_print("GUI", "Unable to schedule shared chat settings update; bot loop not ready.", "ERROR")
 
     def _get_openai_model_choices(self) -> list[str]:
         """Return cached OpenAI model ids, fetching from GPTManager if needed."""
@@ -4988,14 +5048,14 @@ class DBEditor(tk.Tk):
         try:
             gpt_manager = get_reference("GPTManager")
         except Exception as exc:
-            debug_print("GUI", f"Failed to access GPTManager for model list: {exc}")
+            debug_print("GUI", f"Failed to access GPTManager for model list: {exc}", "ERROR")
             gpt_manager = None
         if gpt_manager is not None:
             try:
                 fetched = gpt_manager.get_all_models() or []
                 models.extend(str(m) for m in fetched if m)
             except Exception as exc:
-                debug_print("GUI", f"Error fetching OpenAI models: {exc}")
+                debug_print("GUI", f"Error fetching OpenAI models: {exc}", "ERROR")
         if not models:
             models.extend(GPT_MODELS)
         # Remove duplicates while preserving order
@@ -5092,8 +5152,26 @@ class DBEditor(tk.Tk):
 
     def start_bot_background(self):
         debug_print("GUI", f"Starting bot in background thread.")
+        try:
+            stop_background_server()
+        except Exception:
+            pass
+
+        def _wait_for_port_release(host: str = "127.0.0.1", port: int = 4343, timeout: float = 5.0) -> bool:
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                try:
+                    with socket.create_connection((host, port), timeout=0.2):
+                        time.sleep(0.2)
+                        continue
+                except OSError:
+                    return True
+            return False
+
         def run_bot():
             try:
+                if not _wait_for_port_release():
+                    debug_print("GUI", "Port 4343 still in use; Twitch bot web server may fail to bind.")
                 # Import and run the bot in this thread. twitchbot.main() will block.
                 import twitchbot
 
@@ -5174,7 +5252,7 @@ class DBEditor(tk.Tk):
                 # prefer scheduling without waiting to avoid GUI freezes
                 close_database_sync(wait=False)
             except Exception as e:
-                debug_print("GUI", f"Error scheduling DB close: {e}")
+                debug_print("GUI", f"Error scheduling DB close: {e}", "ERROR")
         except Exception:
             pass
 
@@ -5265,7 +5343,7 @@ class DBEditor(tk.Tk):
             # Last resort: run in a new background thread with its own loop
             threading.Thread(target=lambda: asyncio.run(coro), daemon=True).start()
         except Exception as e:
-            debug_print("GUI", f"_scheduler_call_start error: {e}")
+            debug_print("GUI", f"_scheduler_call_start error: {e}", "ERROR")
 
     def _scheduler_call_end(self, task_id: int) -> None:
         """Attempt to schedule end_task(task_id) on the bot's scheduler.
@@ -5309,7 +5387,7 @@ class DBEditor(tk.Tk):
             # fallback to background thread with its own loop
             threading.Thread(target=lambda: asyncio.run(coro), daemon=True).start()
         except Exception as e:
-            debug_print("GUI", f"_scheduler_call_end error: {e}")
+            debug_print("GUI", f"_scheduler_call_end error: {e}", "ERROR")
 
     def start_capture_location(self, object_name: str, is_onscreen: bool) -> None:
         """Run obs_manager.capture_location(is_onscreen) in a background thread and show the result."""
@@ -5526,7 +5604,7 @@ class DBEditor(tk.Tk):
                             mo.insert(tk.END, r.get("text") if isinstance(r, dict) else str(r))
                         self._apply_listbox_stripes(mo)
                 except Exception as e:
-                    debug_print("GUI", f"Failed applying randomizer lists: {e}")
+                    debug_print("GUI", f"Failed applying randomizer lists: {e}", "ERROR")
 
             self.after(0, apply)
 
@@ -5897,7 +5975,7 @@ class DBEditor(tk.Tk):
             try:
                 rows = self._fetch_remote_users()
             except Exception as exc:
-                debug_print("GUI", f"Supabase user fetch failed: {exc}")
+                debug_print("GUI", f"Supabase user fetch failed: {exc}", "ERROR")
                 rows = []
             self.after(0, lambda rows=rows: self._apply_users_rows(rows))
 
@@ -6200,6 +6278,7 @@ class DBEditor(tk.Tk):
                 debug_print(
                     "GUI",
                     f"Failed to update {field_name} for Supabase user {lookup_value}: {exc}",
+                    "ERROR",
                 )
                 self.after(0, lambda: messagebox.showerror("Update Failed", f"Could not update {label}."))
                 return
@@ -6232,7 +6311,7 @@ class DBEditor(tk.Tk):
                 )
             except Exception as exc:
                 debug_print(
-                    "GUI", f"Failed to remove Supabase user {lookup_value}: {exc}"
+                    "GUI", f"Failed to remove Supabase user {lookup_value}: {exc}", "ERROR"
                 )
                 self.after(0, lambda: messagebox.showerror("Remove User", "Could not remove the selected user."))
                 return
@@ -6423,7 +6502,7 @@ class DBEditor(tk.Tk):
         try:
             rows = self._run_online_db_task(lambda db: db.fetch_table("users", limit=10000))
         except Exception as exc:
-            debug_print("GUI", f"Failed to load Supabase users for purge: {exc}")
+            debug_print("GUI", f"Failed to load Supabase users for purge: {exc}", "ERROR")
             self.after(0, lambda: (self._enable_purge_button(), messagebox.showerror("Purge Failed", "Could not load users from Supabase.")))
             return
         rows = rows or []
@@ -6509,7 +6588,7 @@ class DBEditor(tk.Tk):
                 future = asyncio.run_coroutine_threadsafe(bot.classify_users_for_purge(user_ids), loop)
                 status_map = future.result(timeout=180)
             except Exception as e:
-                debug_print("GUI", f"Failed to classify users for purge: {e}")
+                debug_print("GUI", f"Failed to classify users for purge: {e}", "ERROR")
                 self.after(0, lambda: (self._enable_purge_button(), messagebox.showerror("Purge Failed", "Unable to classify users. See logs for details.")))
                 return
 
@@ -6541,7 +6620,7 @@ class DBEditor(tk.Tk):
 
             self._run_online_db_task(_delete_job)
         except Exception as exc:
-            debug_print("GUI", f"Failed to delete Supabase users: {exc}")
+            debug_print("GUI", f"Failed to delete Supabase users: {exc}", "ERROR")
             self.after(0, lambda: (self._enable_purge_button(), messagebox.showerror("Purge Failed", "Supabase delete failed.")))
             return
 
@@ -6750,7 +6829,7 @@ class DBEditor(tk.Tk):
                 try:
                     lst.pause_listening()
                 except Exception as _e:
-                    debug_print("GUI", f"Failed to pause hotkey listener: {_e}")
+                    debug_print("GUI", f"Failed to pause hotkey listener: {_e}", "ERROR")
         except Exception:
             pass
 
@@ -6761,7 +6840,7 @@ class DBEditor(tk.Tk):
                     try:
                         lst2.resume_listening()
                     except Exception as _e:
-                        debug_print("GUI", f"Failed to resume hotkey listener: {_e}")
+                        debug_print("GUI", f"Failed to resume hotkey listener: {_e}", "ERROR")
             finally:
                 try:
                     dlg.destroy()
@@ -6799,7 +6878,7 @@ class DBEditor(tk.Tk):
                         # fallback to running in a fresh loop
                         asyncio.run(set_hotkey(action, new_value))
                 except Exception as e:
-                    print(f"Error saving hotkey: {e}")
+                    debug_print("GUI", f"Error saving hotkey: {e}", "ERROR")
                     # show error parented to the dialog on main thread
                     self.after(0, lambda err=e, d=dlg: messagebox.showerror("Hotkey", f"Error saving hotkey: {err}", parent=d))
                     return
@@ -6814,20 +6893,20 @@ class DBEditor(tk.Tk):
                             try:
                                 lst.resume_listening()
                             except Exception as _e:
-                                debug_print("GUI", f"hotkey listener resume failed: {_e}")
+                                debug_print("GUI", f"hotkey listener resume failed: {_e}", "ERROR")
                         # now update the OS binding for this action
                         if lst:
                             try:
                                 lst.update_hotkey(action, new_value)
                             except Exception as _e:
-                                debug_print("GUI", f"hotkey listener update failed: {_e}")
+                                debug_print("GUI", f"hotkey listener update failed: {_e}", "ERROR")
                         # close the dialog
                         try:
                             dlg.destroy()
                         except Exception:
                             pass
                     except Exception as _e:
-                        debug_print("GUI", f"notify_save failed: {_e}")
+                        debug_print("GUI", f"notify_save failed: {_e}", "ERROR")
 
                 self.after(0, _notify_save)
 
@@ -6887,9 +6966,9 @@ class DBEditor(tk.Tk):
                         try:
                             lst.unregister_action(action)
                         except Exception as _e:
-                            debug_print("GUI", f"hotkey listener unregister failed: {_e}")
+                            debug_print("GUI", f"hotkey listener unregister failed: {_e}", "ERROR")
                 except Exception as _e:
-                    debug_print("GUI", f"notify_clear failed: {_e}")
+                    debug_print("GUI", f"notify_clear failed: {_e}", "ERROR")
 
             self.after(0, _notify_clear)
 
