@@ -1387,6 +1387,9 @@ class DBEditor(tk.Tk):
                 loop = getattr(bot, attr, None)
                 if loop and loop not in loops and getattr(loop, "is_running", lambda: True)():
                     loops.append(loop)
+        if not loops:
+            debug_print(source, "No running event loop available for scheduling.", "ERROR")
+            return False
         for loop in loops:
             try:
                 asyncio.run_coroutine_threadsafe(coro, loop)
