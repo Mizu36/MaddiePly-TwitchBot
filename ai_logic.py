@@ -516,6 +516,7 @@ class AssistantManager():
         subtitle_result = None
         subtitle_from_payload = False
         subtitles_enabled = await get_setting("Subtitles Enabled", True)
+        subtitles_style = await get_setting("Subtitles Style", "Inverted Pyramid")
         if subtitles_enabled:
             if payload:
                 raw_subtitles = payload.get("subtitle_result")
@@ -604,10 +605,15 @@ class AssistantManager():
             if subtitle_result:
                 try:
                     await self.obs.refresh_browser_sources()
+                    await asyncio.sleep(0.25)
                 except Exception as exc:
                     debug_print("Assistant", f"OBS browser refresh failed: {exc}")
                 subtitle_task = asyncio.create_task(
-                    self.obs.run_subtitle_track(subtitle_result, SUBTITLE_UPDATE_MODE)
+                    self.obs.run_subtitle_track(
+                        subtitle_result,
+                        SUBTITLE_UPDATE_MODE,
+                        style=str(subtitles_style) if subtitles_style is not None else None,
+                    )
                 )
 
             bounce_task = asyncio.create_task(
@@ -630,6 +636,8 @@ class AssistantManager():
                 "Assistant",
                 f"Starting playback for '{prepared_path}' at {playback_volume}% volume on device '{output_device or 'default'}'.",
             )
+            if subtitle_task:
+                await asyncio.sleep(0.12)
             await loop.run_in_executor(
                 None,
                 audio_manager.play_audio,
