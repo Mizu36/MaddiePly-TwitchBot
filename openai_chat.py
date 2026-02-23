@@ -227,7 +227,7 @@ class OpenAiManager:
                 print(f"[ERROR]Failed to get response from OpenAI: {e}")
                 return
         openai_answer = completion.choices[0].message.content
-        deformatted_answer = openai_answer.replace('—', ',').strip()
+        deformatted_answer = openai_answer.replace(' —', ',').replace('—', ',').strip()
         user_input_prompt = prompts[-1]["content"]
         recent_interaction = f"{user_input_prompt}\nMaddiePly's Response: {openai_answer}"
         self._schedule_memory_summary(recent_interaction)

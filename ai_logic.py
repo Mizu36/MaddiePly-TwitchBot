@@ -516,7 +516,7 @@ class AssistantManager():
         subtitle_result = None
         subtitle_from_payload = False
         subtitles_enabled = await get_setting("Subtitles Enabled", True)
-        subtitles_style = await get_setting("Subtitles Style", "Inverted Pyramid")
+        subtitles_style = await get_setting("Subtitles Style", "Pyramid")
         if subtitles_enabled:
             if payload:
                 raw_subtitles = payload.get("subtitle_result")

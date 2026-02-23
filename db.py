@@ -13,7 +13,7 @@ REQUIRED_SETTINGS = {
     "Elevenlabs Synthesizer Model": ("eleven_multilingual_v2", "TEXT"),
     "Elevenlabs TTS Volume": ("100", "INTEGER"),
     "Subtitles Enabled": ("1", "BOOL"),
-    "Subtitles Style": ("Inverted Pyramid", "TEXT"),
+    "Subtitles Style": ("Pyramid", "TEXT"),
     "Default OpenAI Model": ("gpt-4o", "TEXT"),
     "Fine-tune GPT Model": ("null", "TEXT"),
     "Fine-tune Bot Detection Model": ("null", "TEXT"),

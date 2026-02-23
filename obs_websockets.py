@@ -595,7 +595,7 @@ class OBSWebsocketsManager:
                     await asyncio.sleep(delay)
                 self._append_caption_token(token["value"], mode=update_mode, space_before=token.get("space_before"))
                 current_text = "\n".join(self._subtitle_lines)
-                payload = self._build_overlay_payload(current_text, style_label="Inverted Pyramid")
+                payload = self._build_overlay_payload(current_text, style_label="Pyramid")
                 await asyncio.to_thread(self.subtitle_overlay.update_state, payload)
             total_duration = (tts_result.duration_seconds or (tokens[-1]["start"] + 0.75)) + 2.0
             remaining = total_duration - (time.perf_counter() - start_time)
@@ -678,7 +678,7 @@ class OBSWebsocketsManager:
                     debug_print("OBSWebsocketsManager", f"Failed to refresh browser source '{source_name}': {exc}")
         return refreshed
 
-    def _build_overlay_payload(self, text: str, *, style_label: str = "Inverted Pyramid") -> Dict[str, Any]:
+    def _build_overlay_payload(self, text: str, *, style_label: str = "Pyramid") -> Dict[str, Any]:
         lines: List[Dict[str, Any]] = []
         if text:
             clean_lines = [raw_line.strip() for raw_line in text.split("\n") if raw_line.strip()]
@@ -701,7 +701,7 @@ class OBSWebsocketsManager:
         normalized = (style or "").strip().lower()
         if "text box" in normalized:
             return "text_box"
-        return "inverted_pyramid"
+        return "pyramid"
 
     def _build_textbox_payload(self, tts_result: "TTSConversionResult") -> Dict[str, Any]:
         if isinstance(tts_result, dict):

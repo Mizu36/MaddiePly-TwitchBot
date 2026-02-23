@@ -12,12 +12,12 @@ const canvas = document.getElementById("subtitle-text");
 const container = document.getElementById("subtitle-canvas");
 const subtitleBox = document.getElementById("subtitle-box");
 const body = document.body;
-const STYLE_INVERTED = "inverted_pyramid";
+const STYLE_PYRAMID = "pyramid";
 const STYLE_TEXTBOX = "text_box";
 let latestVersion = 0;
 let fetchInFlight = false;
 let pendingFitFrame = null;
-let currentStyle = STYLE_INVERTED;
+let currentStyle = STYLE_PYRAMID;
 let textBoxLineEls = [];
 let textBoxLines = ["", ""];
 let textBoxLineIndex = 0;
@@ -75,7 +75,7 @@ function normalizeStyle(raw) {
     if (val.includes("text box")) {
         return STYLE_TEXTBOX;
     }
-    return STYLE_INVERTED;
+    return STYLE_PYRAMID;
 }
 
 function applyStyle(styleKey) {

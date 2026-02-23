@@ -10,9 +10,9 @@
 
 :root {
     font-family: "FirstCoffee", "Rubik", sans-serif;
-    --textbox-bg-color: 255 171 210;
+    --textbox-bg-color: 60 177 240;
     --textbox-bg-opacity: 0.35;
-    --textbox-accent-color: 255 205 228;
+    --textbox-accent-color: 6 131 199;
     --textbox-accent-opacity: 0.55;
     --textbox-border-radius: 22px;
     --textbox-border-width: 3px;
