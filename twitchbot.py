@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 import twitchio
 import os
 import logging
@@ -880,8 +881,8 @@ class CommandHandler(commands.Component):
             if await get_setting("Auto Ad Enabled"):
                 if self.shared_chat:
                     if not self.shared_chat_ad:
-                        debug_print("CommandHandler", "Ad timer task aborted due to Shared Chat mode. Waiting for 60 seconds before rechecking.")
-                        await asyncio.sleep(60)
+                        debug_print("CommandHandler", "Ad timer task aborted due to Shared Chat mode. Waiting for 300 seconds before rechecking.")
+                        await asyncio.sleep(300)
                         continue
                 ad_interval = await get_setting("Ad Interval (minutes)", default="15")
                 try:
@@ -895,12 +896,15 @@ class CommandHandler(commands.Component):
             else:
                 await asyncio.sleep(300)
     
-    async def play_ad(self) -> None:
+    async def play_ad(self, length: int = None) -> None:
         debug_print("CommandHandler", "Starting ad break...")
         try:
-            duration = await get_setting("Ad Length (seconds)", default="30")
+            if length is not None:
+                duration = length
+            else:
+                duration = await get_setting("Ad Length (seconds)", default=30)
             broadcaster = await self.bot.fetch_channel(broadcaster_id=self.bot.owner_id)
-            await broadcaster.user.start_commercial(length=int(duration))
+            await broadcaster.user.start_commercial(length=duration)
             #await self.bot.send_chat(message=f"/commercial {duration}")
             debug_print("CommandHandler", f"Started a {duration}-second ad break.")
         except Exception as e:
@@ -1040,6 +1044,16 @@ class CommandHandler(commands.Component):
     async def event_raid(self, payload: twitchio.ChannelRaid) -> None:
         debug_print("CommandHandler", f"Handling raid from {payload.from_broadcaster.display_name} with {payload.viewer_count} viewers")
         event = {"type": "raid", "user": payload.from_broadcaster.display_name, "event": payload}
+        channel_info = await payload.from_broadcaster.fetch_channel_info()
+        if hasattr(channel_info, "fetch_game"):
+            game = await channel_info.fetch_game()
+        else:
+            game = "Just Chatting"
+        response = (
+                f"Shoutout to {payload.from_broadcaster.display_name}! Check out their channel at https://twitch.tv/{payload.from_broadcaster.name} "
+                f"and give them a follow! They were last seen streaming {game or 'absolutely nothing.'}"
+            )
+        asyncio.create_task(self.bot.send_chat(response))
         asyncio.create_task(self.assistant.generate_voiced_response(event))
 
     @commands.Component.listener()
@@ -1509,12 +1523,18 @@ def main() -> None:
 
             async with Bot(database=tdb, subs=subs, prefix=prefix) as bot:
                 try:
+                    bot.bot_loop = asyncio.get_running_loop()
                     for pair in tokens:
                         await bot.add_token(*pair)
                     set_reference("TwitchBot", bot)
                     await bot.start(load_tokens=False)
                 except Exception as e:
-                    debug_print(f"Failed to start Twitch bot: {e}")
+                    debug_print(
+                        "TwitchBot",
+                        f"Failed to start Twitch bot: {type(e).__name__}: {e!r}",
+                        "ERROR",
+                    )
+                    debug_print("TwitchBot", f"Traceback:\n{traceback.format_exc()}", "ERROR")
                     
 
     try:
