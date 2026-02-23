@@ -46,6 +46,8 @@ SUBTITLE_LINE_SHRINK_DELAY = 3
 SUBTITLE_PYRAMID_START_RATIO = 0.95
 SUBTITLE_PYRAMID_RATIO_STEP = 0.03
 SUBTITLE_CHAR_WIDTH_RATIO = 0.42
+TEXTBOX_POST_ROLL_SECONDS = 1.0
+TEXTBOX_FADE_OUT_SECONDS = 0.35
 SUBTITLE_LINE_HEIGHT_RATIO = 1.25
 SUBTITLE_WRAP_SLACK = 48
 SUBTITLE_VERTICAL_SAFE_RATIO = 0.9
@@ -542,12 +544,34 @@ class OBSWebsocketsManager:
                 }
             )
             
-    async def run_subtitle_track(self, tts_result: "TTSConversionResult", update_mode: Optional[str] = None) -> None:
+    async def run_subtitle_track(
+        self,
+        tts_result: "TTSConversionResult",
+        update_mode: Optional[str] = None,
+        style: Optional[str] = None,
+    ) -> None:
         """Render timed subtitles using ElevenLabs timestamp metadata."""
         if not tts_result:
             await self.clear_subtitles()
             return
         if not self.subtitle_overlay:
+            return
+        style_key = self._normalize_subtitle_style(style)
+        if style_key == "text_box":
+            payload = self._build_textbox_payload(tts_result)
+            try:
+                await asyncio.to_thread(self.subtitle_overlay.update_state, payload)
+                duration = self._resolve_subtitle_duration(tts_result, payload)
+                await asyncio.sleep(max(0.0, duration + TEXTBOX_POST_ROLL_SECONDS))
+                await asyncio.to_thread(self.subtitle_overlay.update_state, self._build_textbox_hide_payload())
+                await asyncio.sleep(TEXTBOX_FADE_OUT_SECONDS)
+            except asyncio.CancelledError:
+                await asyncio.to_thread(self.subtitle_overlay.update_state, self._build_textbox_clear_payload())
+                raise
+            except Exception as exc:
+                print(f"[ERROR]Subtitle rendering failed: {exc}")
+            finally:
+                await asyncio.to_thread(self.subtitle_overlay.update_state, self._build_textbox_clear_payload())
             return
         update_mode = (update_mode or self._subtitle_mode or "word").lower()
         if update_mode not in {"word", "character"}:
@@ -571,7 +595,7 @@ class OBSWebsocketsManager:
                     await asyncio.sleep(delay)
                 self._append_caption_token(token["value"], mode=update_mode, space_before=token.get("space_before"))
                 current_text = "\n".join(self._subtitle_lines)
-                payload = self._build_overlay_payload(current_text)
+                payload = self._build_overlay_payload(current_text, style_label="Inverted Pyramid")
                 await asyncio.to_thread(self.subtitle_overlay.update_state, payload)
             total_duration = (tts_result.duration_seconds or (tokens[-1]["start"] + 0.75)) + 2.0
             remaining = total_duration - (time.perf_counter() - start_time)
@@ -654,7 +678,7 @@ class OBSWebsocketsManager:
                     debug_print("OBSWebsocketsManager", f"Failed to refresh browser source '{source_name}': {exc}")
         return refreshed
 
-    def _build_overlay_payload(self, text: str) -> Dict[str, Any]:
+    def _build_overlay_payload(self, text: str, *, style_label: str = "Inverted Pyramid") -> Dict[str, Any]:
         lines: List[Dict[str, Any]] = []
         if text:
             clean_lines = [raw_line.strip() for raw_line in text.split("\n") if raw_line.strip()]
@@ -666,10 +690,91 @@ class OBSWebsocketsManager:
                 })
         constrained = self._apply_vertical_constraints(lines)
         return {
+            "style": style_label,
             "lines": constrained,
             "width": SUBTITLE_BOX_WIDTH,
             "height": SUBTITLE_BOX_HEIGHT,
         }
+
+    @staticmethod
+    def _normalize_subtitle_style(style: Optional[str]) -> str:
+        normalized = (style or "").strip().lower()
+        if "text box" in normalized:
+            return "text_box"
+        return "inverted_pyramid"
+
+    def _build_textbox_payload(self, tts_result: "TTSConversionResult") -> Dict[str, Any]:
+        if isinstance(tts_result, dict):
+            text = tts_result.get("source_text") or ""
+            timings = tts_result.get("character_timings") or []
+            duration = tts_result.get("duration_seconds")
+        else:
+            text = getattr(tts_result, "source_text", None) or ""
+            timings = getattr(tts_result, "character_timings", []) or []
+            duration = getattr(tts_result, "duration_seconds", None)
+
+        if not text:
+            words = getattr(tts_result, "word_timings", []) if not isinstance(tts_result, dict) else tts_result.get("word_timings")
+            if words:
+                text = " ".join(str(item.get("text", "")) for item in words if item.get("text"))
+
+        return {
+            "style": "Text Box",
+            "mode": "text_box",
+            "text": text or "",
+            "character_timings": timings,
+            "duration_seconds": duration,
+            "visible": True,
+            "reset": True,
+            "lines": [],
+        }
+
+    @staticmethod
+    def _build_textbox_hide_payload() -> Dict[str, Any]:
+        return {
+            "style": "Text Box",
+            "mode": "text_box",
+            "visible": False,
+            "clear": True,
+        }
+
+    @staticmethod
+    def _build_textbox_clear_payload() -> Dict[str, Any]:
+        return {
+            "style": "Text Box",
+            "mode": "text_box",
+            "visible": False,
+            "reset": True,
+            "lines": [],
+        }
+
+    @staticmethod
+    def _resolve_subtitle_duration(tts_result: "TTSConversionResult", payload: Dict[str, Any]) -> float:
+        if payload.get("duration_seconds"):
+            try:
+                return float(payload["duration_seconds"])
+            except (TypeError, ValueError):
+                pass
+        timings = payload.get("character_timings") or []
+        if timings:
+            last = timings[-1]
+            try:
+                return float(last.get("end") or last.get("start") or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+        if isinstance(tts_result, dict):
+            try:
+                return float(tts_result.get("duration_seconds") or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+        try:
+            return float(getattr(tts_result, "duration_seconds", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            duration = 0.0
+        text = payload.get("text") if isinstance(payload, dict) else ""
+        if not duration and text:
+            return max(1.0, len(str(text)) * 0.04)
+        return duration
 
     def _build_caption_schedule(self, tts_result: "TTSConversionResult", mode: str) -> List[Dict[str, Any]]:
         tokens: List[Dict[str, Any]] = []
@@ -678,7 +783,7 @@ class OBSWebsocketsManager:
         if source_text is None and isinstance(tts_result, dict):
             source_text = tts_result.get("source_text")
 
-        if source_text and character_entries:
+        if mode != "character" and source_text and character_entries:
             tokens = self._build_tokens_from_source_text(source_text, character_entries)
         if not tokens:
             if mode == "character" and character_entries:
