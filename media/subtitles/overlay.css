@@ -10,6 +10,14 @@
 
 :root {
     font-family: "FirstCoffee", "Rubik", sans-serif;
+    --textbox-bg-color: 255 171 210;
+    --textbox-bg-opacity: 0.35;
+    --textbox-accent-color: 255 205 228;
+    --textbox-accent-opacity: 0.55;
+    --textbox-border-radius: 22px;
+    --textbox-border-width: 3px;
+    --textbox-padding: 26px 34px;
+    --textbox-line-gap: 0.2em;
 }
 
 * {
@@ -50,6 +58,10 @@ body {
     padding: 6% 8% 10%;
 }
 
+#subtitle-box {
+    display: contents;
+}
+
 #subtitle-text {
     color: #f2f2f2;
     width: 115%;
@@ -84,4 +96,96 @@ body {
     white-space: pre;
     -webkit-text-stroke: 10px #000000;
     paint-order: stroke fill;
+}
+
+.text-box-mode #subtitle-canvas {
+    padding: 4% 6%;
+    align-items: center;
+    justify-content: center;
+}
+
+.text-box-mode #subtitle-box {
+    width: 90%;
+    max-width: 1280px;
+    min-height: 240px;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    position: relative;
+    padding: var(--textbox-padding);
+    border-radius: var(--textbox-border-radius);
+    background-color: rgb(var(--textbox-bg-color) / var(--textbox-bg-opacity));
+    border: var(--textbox-border-width) solid #ffffff;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.12s ease-out, transform 0.12s ease-out;
+}
+
+.text-box-mode.textbox-visible #subtitle-box {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.text-box-mode.textbox-hiding #subtitle-box {
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.35s ease-in, transform 0.35s ease-in;
+}
+
+.text-box-mode #subtitle-box::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+        radial-gradient(circle at 50% 50%, rgb(var(--textbox-accent-color) / var(--textbox-accent-opacity)) 0 4.5px, transparent 4.6px);
+    background-size: 46px 46px;
+    opacity: 0.9;
+    pointer-events: none;
+}
+
+.text-box-mode #subtitle-box.textbox-image {
+    background-color: transparent;
+    background-image: url("textbox.png");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+}
+
+.text-box-mode #subtitle-box.textbox-image::before {
+    content: none;
+}
+
+.text-box-mode #subtitle-text {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    text-align: left;
+    align-items: stretch;
+    justify-content: space-between;
+    height: 100%;
+    font-size: clamp(36px, 6vh, 72px);
+    line-height: 1.12;
+    gap: 0;
+    -webkit-text-stroke: 0;
+    text-shadow:
+        0 1px 6px rgba(0, 0, 0, 0.45),
+        0 0 2px rgba(0, 0, 0, 0.4);
+    position: relative;
+    z-index: 1;
+}
+
+.text-box-line {
+    width: 100%;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: clip;
+}
+
+.textbox-scroll {
+    transition: transform 0.14s ease-out;
 }

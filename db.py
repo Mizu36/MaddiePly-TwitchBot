@@ -13,7 +13,7 @@ REQUIRED_SETTINGS = {
     "Elevenlabs Synthesizer Model": ("eleven_multilingual_v2", "TEXT"),
     "Elevenlabs TTS Volume": ("100", "INTEGER"),
     "Subtitles Enabled": ("1", "BOOL"),
-    "Subtitles Style": ("Cascading", "TEXT"),
+    "Subtitles Style": ("Inverted Pyramid", "TEXT"),
     "Default OpenAI Model": ("gpt-4o", "TEXT"),
     "Fine-tune GPT Model": ("null", "TEXT"),
     "Fine-tune Bot Detection Model": ("null", "TEXT"),
@@ -538,21 +538,29 @@ def close_database_sync(timeout: float = 5.0, wait: bool = True) -> None:
 async def get_setting(key: str, default: Any = None) -> Any:
     """Get a setting value by key, returning default if not found."""
     debug_print("Database", f"Fetching setting for key '{key}'.")
-    async with DATABASE.acquire() as connection:
-        cursor = await connection.execute("SELECT value, data_type FROM settings WHERE key = ?", (key,))
-        row = await cursor.fetchone()
-        if row:
-            if row["data_type"] == "BOOL":
-                if row["value"] == "True" or row["value"] == "1":
-                    return True
-                else:
-                    return False
-            elif row["data_type"] == "INTEGER":
-                return int(row["value"])
-            elif row["data_type"] == "FLOAT":
-                return float(row["value"])
-            # For TEXT (and any other non-numeric types), return the stored string value
-            return row["value"]
+    for attempt in range(6):
+        try:
+            async with DATABASE.acquire() as connection:
+                cursor = await connection.execute("SELECT value, data_type FROM settings WHERE key = ?", (key,))
+                row = await cursor.fetchone()
+                if row:
+                    if row["data_type"] == "BOOL":
+                        if row["value"] == "True" or row["value"] == "1":
+                            return True
+                        else:
+                            return False
+                    elif row["data_type"] == "INTEGER":
+                        return int(row["value"])
+                    elif row["data_type"] == "FLOAT":
+                        return float(row["value"])
+                    # For TEXT (and any other non-numeric types), return the stored string value
+                    return row["value"]
+                return default
+        except Exception as exc:
+            if "Pool is closing" in str(exc) and attempt < 5:
+                await asyncio.sleep(0.2)
+                continue
+            raise
     return default
 
 async def get_hotkey(action: str, default: str = "null") -> str:

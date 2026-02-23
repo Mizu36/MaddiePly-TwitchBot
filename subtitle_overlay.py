@@ -19,6 +19,7 @@ class _SubtitleRequestHandler(SimpleHTTPRequestHandler):
 
 class SubtitleOverlayServer:
     """Serve subtitle assets and write JSON state for the browser overlay."""
+    sub_styles = ["Inverted Pyramid", "Text Box"]
 
     def __init__(self, port: int = 4816) -> None:
         self.root_dir = Path(path_from_app_root("media", "subtitles"))
