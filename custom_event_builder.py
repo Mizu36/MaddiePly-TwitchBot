@@ -860,6 +860,16 @@ class CustomEventBuilder():
             redemption_name = payload.reward.title
             points = payload.reward.cost
 
+        if redemption_name in ["30-second ad time", "90-second ad time"]:
+            command_handler = get_reference("CommandHandler")
+            if command_handler.shared_chat:
+                if get_setting("Shared Chat Custom Channel Point Redemptions Enabled", False):
+                    if redemption_name == "30-second ad time":
+                        duration = 30
+                    elif redemption_name == "90-second ad time":
+                        duration = 90
+                    await command_handler.play_ad(length=duration)
+                return
         change_set_name = await get_setting("Gacha Change Set Redemption Name", "Change Gacha Set")
         gacha_pull_name = await get_setting("Gacha Pull Redemption Name", "Gacha Pull")
         gacha_enabled = await get_setting("Gacha System Enabled", False)
