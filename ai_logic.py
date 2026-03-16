@@ -604,7 +604,8 @@ class AssistantManager():
 
             if subtitle_result:
                 try:
-                    await self.obs.refresh_browser_sources()
+                    subtitle_source_name = await get_setting("OBS Subtitle Browser Source Name", None)
+                    await self.obs.refresh_browser_sources(source_name=subtitle_source_name)
                     await asyncio.sleep(0.25)
                 except Exception as exc:
                     debug_print("Assistant", f"OBS browser refresh failed: {exc}")

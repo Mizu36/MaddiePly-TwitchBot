@@ -45,6 +45,8 @@ REQUIRED_SETTINGS = {
     "OBS Meme Object Name": ("MemeDisplay", "TEXT"),
     "OBS GIF Placeholder Object Name": ("GIFDisplay", "TEXT"),
     "OBS TTS Display Object Name": ("TTSDisplay", "TEXT"),
+    "OBS Subtitle Browser Source Name": ("Subtitles", "TEXT"),
+    "OBS Gacha Browser Source Name": ("Gacha", "TEXT"),
     "Discord Integration Enabled": ("0", "BOOL"),
     "Discord Announcements Enabled": ("0", "BOOL"),
     "Discord Announcement Channel ID": ("0", "INTEGER"),

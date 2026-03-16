@@ -3568,6 +3568,9 @@ class DBEditor(tk.Tk):
                     if dtype == "BOOL":
                         # skip boolean keys (they are edited inline)
                         continue
+                    if str(r["key"]).startswith("OBS "):
+                        # skip OBS object names (edited inline below shared chat)
+                        continue
                     if r["key"] in inline_hidden_keys:
                         # skip inline-managed keys (comboboxes/sliders)
                         continue
@@ -4598,6 +4601,7 @@ class DBEditor(tk.Tk):
 
         shared_prefix = "Shared Chat"
         shared_bool_rows: list[sqlite3.Row] = []
+        obs_rows: list[sqlite3.Row] = []
         bool_rows: list[sqlite3.Row] = []
         combo_rows: list[sqlite3.Row] = []
         volume_rows: list[sqlite3.Row] = []
@@ -4605,6 +4609,9 @@ class DBEditor(tk.Tk):
         for row in rows:
             key = row["key"]
             dtype = (row["data_type"] or "TEXT").upper()
+            if str(key).startswith("OBS "):
+                obs_rows.append(row)
+                continue
             if dtype == "BOOL":
                 if key.startswith(shared_prefix):
                     shared_bool_rows.append(row)
@@ -4766,6 +4773,30 @@ class DBEditor(tk.Tk):
             cb.bind("<<ComboboxSelected>>", on_sel)
             return grid_row + 1
 
+        def _add_text_row(container, row_data, grid_row: int) -> int:
+            key = row_data["key"]
+            val = row_data["value"]
+            lbl = ttk.Label(container, text=key)
+            lbl.grid(row=grid_row, column=0, sticky=tk.W, padx=4, pady=2)
+            entry = ttk.Entry(container, width=32)
+            entry.grid(row=grid_row, column=1, sticky=tk.W, padx=4, pady=2)
+            try:
+                entry.delete(0, tk.END)
+                entry.insert(0, "" if val is None else str(val))
+            except Exception:
+                pass
+
+            def _commit(_event=None, setting_key=key, widget=entry):
+                try:
+                    new_val = widget.get()
+                    self.save_setting_inline(setting_key, new_val, "TEXT")
+                except Exception as exc:
+                    print(f"Error saving setting {setting_key}: {exc}")
+
+            entry.bind("<FocusOut>", _commit)
+            entry.bind("<Return>", _commit)
+            return grid_row + 1
+
         def _add_volume_slider(container, row_data, grid_column: int) -> None:
             key = row_data["key"]
             raw_val = row_data["value"]
@@ -4842,9 +4873,15 @@ class DBEditor(tk.Tk):
                 slider_frame.grid_columnconfigure(idx, weight=1)
                 _add_volume_slider(slider_frame, row, idx)
 
-        if shared_bool_rows:
-            section = ttk.LabelFrame(inline, text="Shared Chat Settings")
-            section.grid(row=0, column=2, sticky="nw", padx=(0, 0), pady=(0, 0))
+        right_column = None
+        if shared_bool_rows or obs_rows:
+            right_column = ttk.Frame(inline)
+            right_column.grid(row=0, column=2, sticky="nw", padx=(0, 0), pady=(0, 0))
+            right_column.grid_columnconfigure(0, weight=1)
+
+        if shared_bool_rows and right_column is not None:
+            section = ttk.LabelFrame(right_column, text="Shared Chat Settings")
+            section.grid(row=0, column=0, sticky="nw", padx=(0, 0), pady=(0, 0))
             section.columnconfigure(1, weight=1)
             sr = 0
             for row in shared_bool_rows:
@@ -4878,6 +4915,15 @@ class DBEditor(tk.Tk):
             btn.grid(row=sr, column=0, columnspan=2, sticky="we", padx=6, pady=(8, 2))
             self._shared_chat_toggle_btn = btn
             self._update_shared_chat_toggle_button()
+
+        if obs_rows and right_column is not None:
+            obs_section = ttk.LabelFrame(right_column, text="OBS Object Names")
+            obs_section.grid(row=1, column=0, sticky="nw", padx=(0, 0), pady=(8, 0))
+            obs_section.columnconfigure(1, weight=1)
+            obs_rows_sorted = sorted(obs_rows, key=lambda r: str(r["key"]))
+            orow = 0
+            for row in obs_rows_sorted:
+                orow = _add_text_row(obs_section, row, orow)
 
     def _handle_setting_side_effect(self, key: str | None, value: str | None) -> None:
         """Apply runtime side effects for specific settings immediately after save."""

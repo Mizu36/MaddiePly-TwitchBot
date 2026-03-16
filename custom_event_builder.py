@@ -243,7 +243,8 @@ class CustomEventBuilder():
         if not manager:
             return
         try:
-            await manager.refresh_browser_sources()
+            gacha_browser_name = await get_setting("OBS Gacha Browser Source Name", None)
+            await manager.refresh_browser_sources(source_name=gacha_browser_name)
         except Exception as exc:
             debug_print("CustomBuilder", f"OBS browser refresh failed: {exc}")
 
@@ -751,17 +752,17 @@ class CustomEventBuilder():
         *,
         event: dict | None = None,
         cache_key: str | None = None,
+        subtitle_result: dict | None = None,
         extra: dict | None = None,
     ):
         assistant = self._ensure_assistant()
         audio_meta = None
         if assistant:
             try:
-                subtitle_seed = getattr(assistant, "latest_tts_result", None)
-                audio_meta = await assistant._build_audio_metadata(
-                    audio_path,
-                    subtitle_result=subtitle_seed,
-                )
+                subtitle_seed = subtitle_result
+                if subtitle_seed is None:
+                    subtitle_seed = getattr(assistant, "latest_tts_result", None)
+                audio_meta = await assistant._build_audio_metadata(audio_path, subtitle_result=subtitle_seed)
             except Exception:
                 audio_meta = None
         if not audio_meta:
@@ -1477,13 +1478,37 @@ class CustomEventBuilder():
             if not response:
                 print("Failed to generate text response.")
                 return None
-            output = await self.tts(response, use="assistant")
+            subtitle_payload = None
+            if not self.elevenlabs_manager:
+                self.elevenlabs_manager = get_reference("ElevenLabsManager")
+            voice = await get_setting("Elevenlabs Voice ID", None)
+            tts_result = None
+            if self.elevenlabs_manager:
+                tts_result = self.elevenlabs_manager.text_to_audio(input_text=response, voice=voice)
+            output = tts_result.path if tts_result else None
+            if tts_result:
+                subtitle_payload = tts_result.to_dict()
+            if not output:
+                if not self.azure_manager:
+                    self.azure_manager = get_reference("SpeechToTextManager")
+                voice = await get_setting("Azure TTS Backup Voice", None)
+                output = self.azure_manager.text_to_speech(text=response, voice=voice)
+                if output:
+                    subtitle_payload = {
+                        "path": output,
+                        "character_timings": [],
+                        "word_timings": [],
+                        "duration_seconds": None,
+                        "audio_format": "mp3_44100_128",
+                        "source_text": response,
+                    }
             if not output:
                 return None
             cache = await self._build_voice_asset(
                 output,
                 event=event,
                 cache_key=cache_key,
+                subtitle_result=subtitle_payload,
                 extra={"text": response},
             )
         if execute or event is None:
@@ -1509,13 +1534,37 @@ class CustomEventBuilder():
             if not response:
                 print("Failed to generate text response.")
                 return None
-            output = await self.tts(response, use="assistant")
+            subtitle_payload = None
+            if not self.elevenlabs_manager:
+                self.elevenlabs_manager = get_reference("ElevenLabsManager")
+            voice = await get_setting("Elevenlabs Voice ID", None)
+            tts_result = None
+            if self.elevenlabs_manager:
+                tts_result = self.elevenlabs_manager.text_to_audio(input_text=response, voice=voice)
+            output = tts_result.path if tts_result else None
+            if tts_result:
+                subtitle_payload = tts_result.to_dict()
+            if not output:
+                if not self.azure_manager:
+                    self.azure_manager = get_reference("SpeechToTextManager")
+                voice = await get_setting("Azure TTS Backup Voice", None)
+                output = self.azure_manager.text_to_speech(text=response, voice=voice)
+                if output:
+                    subtitle_payload = {
+                        "path": output,
+                        "character_timings": [],
+                        "word_timings": [],
+                        "duration_seconds": None,
+                        "audio_format": "mp3_44100_128",
+                        "source_text": response,
+                    }
             if not output:
                 return None
             cache = await self._build_voice_asset(
                 output,
                 event=event,
                 cache_key=cache_key,
+                subtitle_result=subtitle_payload,
                 extra={"text": response, "personality": True},
             )
         if execute or event is None:

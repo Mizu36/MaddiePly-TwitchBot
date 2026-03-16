@@ -614,8 +614,8 @@ class OBSWebsocketsManager:
         if self.subtitle_overlay:
             await asyncio.to_thread(self.subtitle_overlay.clear_state)
 
-    async def refresh_browser_sources(self, scene_name: Optional[str] = None) -> int:
-        """Refresh all browser sources in the target scene."""
+    async def refresh_browser_sources(self, scene_name: Optional[str] = None, source_name: Optional[str] = None) -> int:
+        """Refresh all browser sources in the target scene if no specific source is provided. Otherwise refreshes all sources in the current scene or specified scene."""
         if not self.ws:
             return 0
         try:
@@ -649,6 +649,37 @@ class OBSWebsocketsManager:
 
         refreshed = 0
         items = getattr(scene_items, "scene_items", None) or getattr(scene_items, "sceneItems", None) or []
+        if source_name:
+            scene_source_names = set()
+            for item in items:
+                if isinstance(item, dict):
+                    scene_source = item.get("sourceName")
+                else:
+                    scene_source = getattr(item, "sourceName", None) or getattr(item, "source_name", None)
+                if scene_source:
+                    scene_source_names.add(str(scene_source))
+            if source_name in scene_source_names:
+                kind = input_map.get(source_name, "")
+                if "browser" in str(kind).lower():
+                    try:
+                        await asyncio.to_thread(
+                            self.ws.send,
+                            "PressInputPropertiesButton",
+                            {"inputName": source_name, "propertyName": "refreshnocache"},
+                        )
+                        refreshed += 1
+                    except Exception:
+                        try:
+                            await asyncio.to_thread(
+                                self.ws.send,
+                                "PressInputPropertiesButton",
+                                {"inputName": source_name, "propertyName": "refresh"},
+                            )
+                            refreshed += 1
+                        except Exception as exc:
+                            debug_print("OBSWebsocketsManager", f"Failed to refresh browser source '{source_name}': {exc}")
+                return refreshed
+            source_name = None
         for item in items:
             if isinstance(item, dict):
                 source_name = item.get("sourceName")
