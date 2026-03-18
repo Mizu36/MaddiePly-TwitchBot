@@ -1163,6 +1163,160 @@ class OBSWebsocketsManager:
         adjusted = max(SUBTITLE_MIN_FONT_SIZE, int(base_size - line_penalty))
         return adjusted
 
+    async def _set_media_source_path(self, object_name: str, path: str) -> bool:
+        """Set an OBS media/image source file path via input/source settings APIs."""
+        if not self.ws or not self.connected:
+            debug_print("OBSWebsocketsManager", "OBS is not connected; cannot set media source path.", "ERROR")
+            return False
+
+        abs_path = os.path.abspath(path)
+        if not os.path.exists(abs_path):
+            debug_print("OBSWebsocketsManager", f"Media source path missing: {abs_path}", "ERROR")
+            return False
+
+        used_input_api = True
+        try:
+            get_resp = await asyncio.to_thread(
+                self.ws.send, "GetInputSettings", {"inputName": object_name}
+            )
+        except Exception:
+            try:
+                get_resp = await asyncio.to_thread(
+                    self.ws.send, "GetSourceSettings", {"sourceName": object_name}
+                )
+                used_input_api = False
+            except Exception as exc:
+                debug_print(
+                    "OBSWebsocketsManager",
+                    f"Could not fetch settings for '{object_name}' before media reset: {exc}",
+                    "ERROR",
+                )
+                return False
+
+        source_settings = {}
+        try:
+            if get_resp is None:
+                source_settings = {}
+            elif hasattr(get_resp, "inputSettings"):
+                source_settings = get_resp.inputSettings or {}
+            elif hasattr(get_resp, "sourceSettings"):
+                source_settings = get_resp.sourceSettings or {}
+            elif isinstance(get_resp, dict):
+                source_settings = get_resp.get("inputSettings") or get_resp.get("sourceSettings") or get_resp
+            else:
+                source_settings = dict(get_resp)
+        except Exception:
+            source_settings = {}
+
+        preferred_keys = ["file", "local_file", "localFile", "path"]
+        key_to_set = None
+        if isinstance(source_settings, dict):
+            for key in preferred_keys:
+                if key in source_settings:
+                    key_to_set = key
+                    break
+        if key_to_set is None:
+            key_to_set = "file"
+
+        if used_input_api:
+            payload = {
+                "inputName": object_name,
+                "inputSettings": {key_to_set: abs_path},
+                "overlay": False,
+            }
+            request_name = "SetInputSettings"
+        else:
+            payload = {
+                "sourceName": object_name,
+                "sourceSettings": {key_to_set: abs_path},
+            }
+            request_name = "SetSourceSettings"
+
+        try:
+            await asyncio.to_thread(self.ws.send, request_name, payload)
+            return True
+        except Exception as exc:
+            debug_print(
+                "OBSWebsocketsManager",
+                f"Failed to set media path for '{object_name}' using {request_name}: {exc}",
+                "ERROR",
+            )
+            return False
+
+    async def _set_scene_item_enabled_by_name(self, object_name: str, enabled: bool) -> None:
+        if not self.ws or not self.connected:
+            return
+        try:
+            current_scene = self.ws.get_current_program_scene().current_program_scene_name
+            scene_items = self.ws.get_scene_item_list(current_scene)
+        except Exception:
+            return
+
+        scene_item_id = None
+        for item in scene_items.scene_items:
+            if item.get("sourceName") == object_name:
+                scene_item_id = item.get("sceneItemId")
+                break
+
+        if scene_item_id:
+            try:
+                self.ws.set_scene_item_enabled(current_scene, scene_item_id, bool(enabled))
+            except Exception:
+                pass
+
+    def _resolve_default_display_path(self, *, object_name_override: str | None = None, is_meme: bool = True) -> Path:
+        """Resolve the best available local placeholder asset path for a display source."""
+        media_root = path_from_app_root("media")
+        if object_name_override:
+            candidates = [
+                media_root / "images_and_gifs" / "test_tts.png",
+                media_root / "images_and_gifs" / "test_tts.png.png",
+            ]
+            fallback = candidates[0]
+        elif is_meme:
+            candidates = [
+                media_root / "memes" / "test_meme.png",
+                media_root / "memes" / "test_meme.jpg",
+                media_root / "memes" / "test_meme.jpeg",
+                media_root / "memes" / "test_meme.gif",
+            ]
+            fallback = candidates[0]
+        else:
+            candidates = [
+                media_root / "images_and_gifs" / "test_anime.gif",
+                media_root / "images_and_gifs" / "test_anim.gif",
+            ]
+            fallback = candidates[0]
+
+        for candidate in candidates:
+            try:
+                if candidate.exists():
+                    return candidate
+            except Exception:
+                continue
+        return fallback
+
+    async def restore_tts_display_placeholder(self, disable_source: bool = True) -> bool:
+        """Reset the TTS display source to the default placeholder image.
+
+        This prevents OBS from referencing temporary overlay files that are
+        deleted during app shutdown cleanup.
+        """
+        try:
+            object_name = await get_setting("OBS TTS Display Object Name", "TTSDisplay")
+        except Exception:
+            object_name = "TTSDisplay"
+        if not object_name:
+            object_name = "TTSDisplay"
+
+        default_path = self._resolve_default_display_path(object_name_override=object_name, is_meme=False)
+        updated = await self._set_media_source_path(object_name, str(default_path))
+        if disable_source:
+            await self._set_scene_item_enabled_by_name(object_name, False)
+        if updated:
+            debug_print("OBSWebsocketsManager", f"Reset '{object_name}' to placeholder: {default_path}")
+        return updated
+
     async def display_meme(self, path: str, is_meme: bool = True, duration: float = None, ready_event=None, ready_opacity: float | None = None, object_name_override: str | None = None):
         current_scene = self.ws.get_current_program_scene().current_program_scene_name
         scene_items = self.ws.get_scene_item_list(current_scene)
@@ -1271,110 +1425,100 @@ class OBSWebsocketsManager:
                 print(f"[DEBUG] Could not fetch settings for '{object_name}': {e2}")
             return
 
-        # Force filter opacity to 0.0 before fade in (filter expects 0.0-1.0)
-        self.ws.set_source_filter_settings(
-            object_name,
-            "Color Correction",
-            {
-                "opacity": 0.0
-            }
-        )
+        source_set = True
+        try:
+            # Force filter opacity to 0.0 before fade in (filter expects 0.0-1.0)
+            self.ws.set_source_filter_settings(
+                object_name,
+                "Color Correction",
+                {
+                    "opacity": 0.0
+                }
+            )
 
-        #Enable the source if disabled
-        self.ws.set_scene_item_enabled(current_scene, scene_item_id, True)
+            #Enable the source if disabled
+            self.ws.set_scene_item_enabled(current_scene, scene_item_id, True)
 
-        # Fade in the meme (use 0.0..1.0 range for filter opacity)
-        steps = self.FADE_STEPS
-        step_sleep = self.FADE_STEP_INTERVAL
-        ready_set = False
-        target_opacity = None
-        if ready_event is not None:
-            try:
-                if ready_opacity is None:
+            # Fade in the meme (use 0.0..1.0 range for filter opacity)
+            steps = self.FADE_STEPS
+            step_sleep = self.FADE_STEP_INTERVAL
+            ready_set = False
+            target_opacity = None
+            if ready_event is not None:
+                try:
+                    if ready_opacity is None:
+                        target_opacity = 1.0
+                    else:
+                        target_opacity = max(0.0, min(1.0, float(ready_opacity)))
+                except Exception:
                     target_opacity = 1.0
-                else:
-                    target_opacity = max(0.0, min(1.0, float(ready_opacity)))
-            except Exception:
-                target_opacity = 1.0
-        for i in range(1, steps + 1):
-            t = i / steps
+            for i in range(1, steps + 1):
+                t = i / steps
+                self.ws.set_source_filter_settings(
+                    object_name,
+                    "Color Correction",
+                    {
+                        "opacity": float(t)
+                    }
+                )
+                if ready_event is not None and not ready_set and target_opacity is not None and t >= target_opacity:
+                    ready_event.set()
+                    ready_set = True
+                await asyncio.sleep(step_sleep)
+
+            # Force opacity to full (1.0)
             self.ws.set_source_filter_settings(
                 object_name,
                 "Color Correction",
                 {
-                    "opacity": float(t)
+                    "opacity": 1.0
                 }
             )
-            if ready_event is not None and not ready_set and target_opacity is not None and t >= target_opacity:
+            if ready_event is not None and not ready_set:
                 ready_event.set()
-                ready_set = True
-            await asyncio.sleep(step_sleep)
 
-        # Force opacity to full (1.0)
-        self.ws.set_source_filter_settings(
-            object_name,
-            "Color Correction",
-            {
-                "opacity": 1.0
-            }
-        )
-        if ready_event is not None and not ready_set:
-            ready_event.set()
+            # Wait, then fade out
+            await asyncio.sleep(fade_out_delay)
+            for i in range(1, steps + 1):
+                t = i / steps
+                self.ws.set_source_filter_settings(
+                    object_name,
+                    "Color Correction",
+                    {
+                        "opacity": float(1.0 - t)
+                    }
+                )
+                await asyncio.sleep(step_sleep)
 
-        # Wait 10 seconds, then fade out the meme
-        await asyncio.sleep(fade_out_delay)
-        for i in range(1, steps + 1):
-            t = i / steps
+            # Ensure opacity is fully off
             self.ws.set_source_filter_settings(
                 object_name,
                 "Color Correction",
                 {
-                    "opacity": float(1.0 - t)
+                    "opacity": 0.0
                 }
             )
-            await asyncio.sleep(step_sleep)
-
-        # Ensure opacity is fully off
-        self.ws.set_source_filter_settings(
-            object_name,
-            "Color Correction",
-            {
-                "opacity": 0.0
-            }
-        )
-
-        media_root = path_from_app_root("media")
-        if object_name_override:
-            default_path = media_root / "images_and_gifs" / "test_tts.png"
-        elif is_meme:
-            default_path = media_root / "memes" / "test_meme.png"
-        else:
-            default_path = media_root / "images_and_gifs" / "test_anime.gif"
-
-        default_abs_path = str(default_path)
-        if default_path.exists():
-            restore_payload = (
-                {
-                    "inputName": object_name,
-                    "inputSettings": {key_to_set: default_abs_path},
-                    "overlay": False,
-                }
-                if used_input_api
-                else {
-                    "sourceName": object_name,
-                    "sourceSettings": {key_to_set: default_abs_path},
-                }
-            )
-            restore_request = "SetInputSettings" if used_input_api else "SetSourceSettings"
+        finally:
             try:
-                await asyncio.to_thread(self.ws.send, restore_request, restore_payload)
-            except Exception as exc:
-                print(f"Failed to restore placeholder for '{object_name}': {exc}")
-        else:
-            print(f"Placeholder file missing at {default_abs_path}; leaving current media in place.",)
-
-        #Disable the source after fade out
-        self.ws.set_scene_item_enabled(current_scene, scene_item_id, False)
+                if source_set:
+                    default_path = self._resolve_default_display_path(
+                        object_name_override=object_name_override,
+                        is_meme=is_meme,
+                    )
+                    if default_path.exists():
+                        await self._set_media_source_path(object_name, str(default_path))
+                    else:
+                        debug_print(
+                            "OBSWebsocketsManager",
+                            f"Placeholder file missing at {default_path}; keeping current media path.",
+                            "ERROR",
+                        )
+            finally:
+                #Disable the source after fade out or on failure
+                try:
+                    self.ws.set_scene_item_enabled(current_scene, scene_item_id, False)
+                except Exception:
+                    pass
 
     def get_obs_screenshot(self, output_path: str) -> str:
         '''Takes a screenshot of the OBS output using obs-websockets and saves it to a temporary file. Returns the file path.'''
