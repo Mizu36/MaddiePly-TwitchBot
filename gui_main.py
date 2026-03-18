@@ -5290,6 +5290,7 @@ class DBEditor(tk.Tk):
                 self._shared_chat_job = None
         except Exception:
             pass
+
         # Fire-and-forget the DB close so the GUI doesn't hang waiting for
         # asynchronous resources to shut down. If the DB loop exists and is
         # running we schedule the close there without waiting; otherwise we
