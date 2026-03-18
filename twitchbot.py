@@ -91,6 +91,175 @@ class Bot(commands.AutoBot):
         )
         debug_print("AutoBot", "AutoBot initialized.")
 
+    @staticmethod
+    def _subscription_owner(payload: eventsub.SubscriptionPayload) -> str:
+        return (
+            getattr(payload, "broadcaster_user_id", None)
+            or getattr(payload, "user_id", None)
+            or getattr(payload, "to_broadcaster_user_id", None)
+            or getattr(payload, "moderator_user_id", None)
+            or "unknown"
+        )
+
+    def _build_broadcaster_subscriptions(self, broadcaster_user_id: str) -> list[eventsub.SubscriptionPayload]:
+        return [
+            eventsub.ChatMessageSubscription(broadcaster_user_id=broadcaster_user_id, user_id=self.bot_id), #Receives chat messages
+            eventsub.ChannelCheerSubscription(broadcaster_user_id=broadcaster_user_id), #Receives bits cheers
+            eventsub.ChannelSubscribeSubscription(broadcaster_user_id=broadcaster_user_id), #Receives new subscriptions
+            eventsub.ChannelSubscribeMessageSubscription(broadcaster_user_id=broadcaster_user_id), #Receives subscription messages and resubs without messages
+            eventsub.ChannelSubscriptionEndSubscription(broadcaster_user_id=broadcaster_user_id), #Receives subscription end events
+            eventsub.ChannelFollowSubscription(broadcaster_user_id=broadcaster_user_id, moderator_user_id=self.bot_id), #Receives new followers
+            eventsub.ChannelRaidSubscription(to_broadcaster_user_id=broadcaster_user_id), #Receives raids to the channel
+            eventsub.ChannelSubscriptionGiftSubscription(broadcaster_user_id=broadcaster_user_id), #Receives gifted subscriptions
+            eventsub.ChannelPointsAutoRedeemV2Subscription(broadcaster_user_id=broadcaster_user_id), #Receives default channel points redemptions
+            eventsub.ChannelPointsRedeemAddSubscription(broadcaster_user_id=broadcaster_user_id), #Receives custom channel points redemptions
+            eventsub.SuspiciousUserMessageSubscription(broadcaster_user_id=broadcaster_user_id, moderator_user_id=self.bot_id), #Receives suspicious messages for AutoMod
+            eventsub.SharedChatSessionBeginSubscription(broadcaster_user_id=broadcaster_user_id), #Receives shared chat start events
+            eventsub.SharedChatSessionUpdateSubscription(broadcaster_user_id=broadcaster_user_id), #Receives shared chat update events
+            eventsub.SharedChatSessionEndSubscription(broadcaster_user_id=broadcaster_user_id), #Receives shared chat end events
+            eventsub.StreamOnlineSubscription(broadcaster_user_id=broadcaster_user_id), #Receives stream online events
+            eventsub.StreamOfflineSubscription(broadcaster_user_id=broadcaster_user_id), #Receives stream offline events
+            eventsub.CharityCampaignStartSubscription(broadcaster_user_id=broadcaster_user_id), #Receives charity campaign start events
+            eventsub.CharityCampaignProgressSubscription(broadcaster_user_id=broadcaster_user_id), #Receives charity campaign progress events
+            eventsub.CharityCampaignStopSubscription(broadcaster_user_id=broadcaster_user_id), #Receives charity campaign stop events
+            eventsub.GoalBeginSubscription(broadcaster_user_id=broadcaster_user_id), #Receives goal begin events
+            eventsub.GoalProgressSubscription(broadcaster_user_id=broadcaster_user_id), #Receives goal progress events
+            eventsub.GoalEndSubscription(broadcaster_user_id=broadcaster_user_id), #Receives goal end events
+            eventsub.HypeTrainBeginSubscription(broadcaster_user_id=broadcaster_user_id), #Receives hype train begin events
+            eventsub.HypeTrainProgressSubscription(broadcaster_user_id=broadcaster_user_id), #Receives hype train progress events
+            eventsub.HypeTrainEndSubscription(broadcaster_user_id=broadcaster_user_id), #Receives hype train end events
+            eventsub.ChannelPollBeginSubscription(broadcaster_user_id=broadcaster_user_id), #Receives channel poll begin events
+            eventsub.ChannelPollProgressSubscription(broadcaster_user_id=broadcaster_user_id), #Receives channel poll progress events
+            eventsub.ChannelPollEndSubscription(broadcaster_user_id=broadcaster_user_id), #Receives channel poll end events
+            eventsub.ChannelPredictionBeginSubscription(broadcaster_user_id=broadcaster_user_id), #Receives channel prediction begin events
+            eventsub.ChannelPredictionProgressSubscription(broadcaster_user_id=broadcaster_user_id), #Receives channel prediction progress events
+            eventsub.ChannelPredictionLockSubscription(broadcaster_user_id=broadcaster_user_id), #Receives channel prediction lock events
+            eventsub.ChannelPredictionEndSubscription(broadcaster_user_id=broadcaster_user_id), #Receives channel prediction end events
+            eventsub.ShieldModeBeginSubscription(broadcaster_user_id=broadcaster_user_id, moderator_user_id=self.bot_id), #Receives shield mode begin events
+            eventsub.ShieldModeEndSubscription(broadcaster_user_id=broadcaster_user_id, moderator_user_id=self.bot_id), #Receives shield mode end events
+            eventsub.ShoutoutCreateSubscription(broadcaster_user_id=broadcaster_user_id, moderator_user_id=self.bot_id), #Receives shoutout create events
+            eventsub.ShoutoutReceiveSubscription(broadcaster_user_id=broadcaster_user_id, moderator_user_id=self.bot_id), #Receives shoutout receive events
+            eventsub.AutomodMessageHoldSubscription(broadcaster_user_id=broadcaster_user_id, moderator_user_id=self.bot_id), #Receives AutoMod held messages
+            eventsub.AdBreakBeginSubscription(broadcaster_user_id=broadcaster_user_id), #Receives ad break begin events
+        ]
+
+    async def _subscribe_bot_whispers(self, *, reason: str) -> None:
+        try:
+            resp: twitchio.MultiSubscribePayload = await self.multi_subscribe([
+                eventsub.WhisperReceivedSubscription(user_id=self.bot_id),
+            ])
+            if not resp.errors:
+                debug_print("AutoBot", f"[{reason}] Subscribed bot user to whispers.")
+                return
+
+            only_conflicts = True
+            for sub_error in resp.errors:
+                err_obj = getattr(sub_error, "error", sub_error)
+                status = getattr(err_obj, "status", None)
+                err_text = str(err_obj)
+                is_conflict = (
+                    status == 409
+                    or "status 409" in err_text
+                    or "'status': 409" in err_text
+                    or "already exists" in err_text.lower()
+                )
+                if not is_conflict:
+                    only_conflicts = False
+                    break
+
+            if only_conflicts:
+                debug_print("AutoBot", f"[{reason}] Whisper subscription already exists.")
+            else:
+                debug_print("AutoBot", f"[{reason}] Failed to subscribe bot user to whispers: {resp.errors}", "ERROR")
+        except Exception as exc:
+            print(f"[{reason}] Error subscribing bot user to whispers: {exc}")
+
+    async def _subscribe_broadcaster_events(self, broadcaster_user_id: str, *, reason: str) -> None:
+        subs = self._build_broadcaster_subscriptions(broadcaster_user_id)
+        resp: twitchio.MultiSubscribePayload = await self.multi_subscribe(subs)
+
+        def _sub_key(payload_obj: eventsub.SubscriptionPayload) -> tuple[str, str]:
+            return (payload_obj.__class__.__name__, self._subscription_owner(payload_obj))
+
+        error_by_key: dict[tuple[str, str], object] = {}
+        for sub_error in (resp.errors or []):
+            sub_payload = getattr(sub_error, "subscription", None)
+            if sub_payload is None:
+                continue
+            error_by_key[_sub_key(sub_payload)] = sub_error
+
+        for payload in subs:
+            owner_id = self._subscription_owner(payload)
+            key = (payload.__class__.__name__, owner_id)
+            sub_error = error_by_key.get(key)
+            if sub_error is None:
+                debug_print("AutoBot", f"[{reason}] Subscribed to: {payload.__class__.__name__} for user: {owner_id}")
+                continue
+
+            err_obj = getattr(sub_error, "error", sub_error)
+            status = getattr(err_obj, "status", None)
+            err_text = str(err_obj)
+            is_conflict = (
+                status == 409
+                or "status 409" in err_text
+                or "'status': 409" in err_text
+                or "already exists" in err_text.lower()
+            )
+
+            if is_conflict:
+                debug_print(
+                    "AutoBot",
+                    f"[{reason}] Subscription already exists: {payload.__class__.__name__} for user: {owner_id}",
+                )
+            else:
+                debug_print(
+                    "AutoBot",
+                    f"[{reason}] Failed to subscribe to: {sub_error} for user: {owner_id}",
+                    "ERROR",
+                )
+
+    async def ensure_startup_subscriptions(self) -> None:
+        """Rebuild full EventSub subscriptions from stored tokens at startup.
+
+        This makes startup robust even when OAuth was completed through the local
+        FastAPI callback flow (which writes tokens directly to DB).
+        """
+        await self._subscribe_bot_whispers(reason="startup")
+        broadcaster_ids: list[str] = []
+        try:
+            async with self.database.acquire() as connection:
+                cursor = await connection.execute("SELECT user_id FROM tokens")
+                rows = await cursor.fetchall()
+            for row in rows:
+                user_id = str(row["user_id"])
+                if user_id and user_id != str(self.bot_id):
+                    broadcaster_ids.append(user_id)
+        except Exception as exc:
+            debug_print("AutoBot", f"[startup] Failed to inspect token table for subscriptions: {exc}", "ERROR")
+            return
+
+        # Preserve order but avoid duplicate multi_subscribe calls.
+        seen: set[str] = set()
+        unique_broadcaster_ids: list[str] = []
+        for uid in broadcaster_ids:
+            if uid not in seen:
+                seen.add(uid)
+                unique_broadcaster_ids.append(uid)
+
+        if not unique_broadcaster_ids:
+            debug_print("AutoBot", "[startup] No broadcaster tokens found; skipping startup EventSub rebuild.")
+            return
+
+        for broadcaster_user_id in unique_broadcaster_ids:
+            try:
+                await self._subscribe_broadcaster_events(broadcaster_user_id, reason="startup")
+            except Exception as exc:
+                debug_print(
+                    "AutoBot",
+                    f"[startup] Failed subscribing broadcaster {broadcaster_user_id}: {type(exc).__name__}: {exc}",
+                    "ERROR",
+                )
+
     async def setup_hook(self) -> None:
         await self.load_commands()
         self.command_handler = CommandHandler(self, self.prefix)
@@ -106,74 +275,10 @@ class Bot(commands.AutoBot):
         
         if payload.user_id == self.bot_id:
             debug_print("AutoBot", "User id matched the bot id; ensuring bot-level subscriptions.")
-            try:
-                resp: twitchio.MultiSubscribePayload = await self.multi_subscribe([
-                    eventsub.WhisperReceivedSubscription(user_id=self.bot_id),
-                ])
-                if resp.errors:
-                    debug_print("AutoBot", f"Failed to subscribe bot user to whispers: {resp.errors}")
-            except Exception as exc:
-                print(f"Error subscribing bot user to whispers: {exc}")
+            await self._subscribe_bot_whispers(reason="oauth")
             return
-        
-        subs: list[eventsub.SubscriptionPayload] = [
-            eventsub.ChatMessageSubscription(broadcaster_user_id=payload.user_id, user_id=self.bot_id), #Receives chat messages
-            eventsub.ChannelCheerSubscription(broadcaster_user_id=payload.user_id), #Receives bits cheers
-            eventsub.ChannelSubscribeSubscription(broadcaster_user_id=payload.user_id), #Receives new subscriptions
-            eventsub.ChannelSubscribeMessageSubscription(broadcaster_user_id=payload.user_id), #Receives subscription messages and resubs without messages
-            eventsub.ChannelSubscriptionEndSubscription(broadcaster_user_id=payload.user_id), #Receives subscription end events
-            eventsub.ChannelFollowSubscription(broadcaster_user_id=payload.user_id, moderator_user_id=self.bot_id), #Receives new followers
-            eventsub.ChannelRaidSubscription(to_broadcaster_user_id=payload.user_id), #Receives raids to the channel
-            eventsub.ChannelSubscriptionGiftSubscription(broadcaster_user_id=payload.user_id), #Receives gifted subscriptions
-            eventsub.ChannelPointsAutoRedeemV2Subscription(broadcaster_user_id=payload.user_id), #Receives default channel points redemptions
-            eventsub.ChannelPointsRedeemAddSubscription(broadcaster_user_id=payload.user_id), #Receives custom channel points redemptions
-            eventsub.SuspiciousUserMessageSubscription(broadcaster_user_id=payload.user_id, moderator_user_id=self.bot_id), #Receives suspicious messages for AutoMod
-            eventsub.SharedChatSessionBeginSubscription(broadcaster_user_id=payload.user_id), #Receives shared chat start events
-            eventsub.SharedChatSessionUpdateSubscription(broadcaster_user_id=payload.user_id), #Receives shared chat update events
-            eventsub.SharedChatSessionEndSubscription(broadcaster_user_id=payload.user_id), #Receives shared chat end events
-            eventsub.StreamOnlineSubscription(broadcaster_user_id=payload.user_id), #Receives stream online events
-            eventsub.StreamOfflineSubscription(broadcaster_user_id=payload.user_id), #Receives stream offline events
-            eventsub.CharityCampaignStartSubscription(broadcaster_user_id=payload.user_id), #Receives charity campaign start events
-            eventsub.CharityCampaignProgressSubscription(broadcaster_user_id=payload.user_id), #Receives charity campaign progress events
-            eventsub.CharityCampaignStopSubscription(broadcaster_user_id=payload.user_id), #Receives charity campaign stop events
-            eventsub.GoalBeginSubscription(broadcaster_user_id=payload.user_id), #Receives goal begin events
-            eventsub.GoalProgressSubscription(broadcaster_user_id=payload.user_id), #Receives goal progress events
-            eventsub.GoalEndSubscription(broadcaster_user_id=payload.user_id), #Receives goal end events
-            eventsub.HypeTrainBeginSubscription(broadcaster_user_id=payload.user_id), #Receives hype train begin events
-            eventsub.HypeTrainProgressSubscription(broadcaster_user_id=payload.user_id), #Receives hype train progress events
-            eventsub.HypeTrainEndSubscription(broadcaster_user_id=payload.user_id), #Receives hype train end events
-            eventsub.ChannelPollBeginSubscription(broadcaster_user_id=payload.user_id), #Receives channel poll begin events
-            eventsub.ChannelPollProgressSubscription(broadcaster_user_id=payload.user_id), #Receives channel poll progress events
-            eventsub.ChannelPollEndSubscription(broadcaster_user_id=payload.user_id), #Receives channel poll end events
-            eventsub.ChannelPredictionBeginSubscription(broadcaster_user_id=payload.user_id), #Receives channel prediction begin events
-            eventsub.ChannelPredictionProgressSubscription(broadcaster_user_id=payload.user_id), #Receives channel prediction progress events
-            eventsub.ChannelPredictionLockSubscription(broadcaster_user_id=payload.user_id), #Receives channel prediction lock events
-            eventsub.ChannelPredictionEndSubscription(broadcaster_user_id=payload.user_id), #Receives channel prediction end events
-            eventsub.ShieldModeBeginSubscription(broadcaster_user_id=payload.user_id, moderator_user_id=self.bot_id), #Receives shield mode begin events
-            eventsub.ShieldModeEndSubscription(broadcaster_user_id=payload.user_id, moderator_user_id=self.bot_id), #Receives shield mode end events
-            eventsub.ShoutoutCreateSubscription(broadcaster_user_id=payload.user_id, moderator_user_id=self.bot_id), #Receives shoutout create events
-            eventsub.ShoutoutReceiveSubscription(broadcaster_user_id=payload.user_id, moderator_user_id=self.bot_id), #Receives shoutout receive events
-            eventsub.AutomodMessageHoldSubscription(broadcaster_user_id=payload.user_id, moderator_user_id=self.bot_id), #Receives AutoMod held messages
-            eventsub.AdBreakBeginSubscription(broadcaster_user_id=payload.user_id), #Receives ad break begin events
-        ]
 
-        def _subscription_owner(payload: eventsub.SubscriptionPayload) -> str:
-            return (
-                getattr(payload, "broadcaster_user_id", None)
-                or getattr(payload, "user_id", None)
-                or getattr(payload, "to_broadcaster_user_id", None)
-                or getattr(payload, "moderator_user_id", None)
-                or "unknown"
-            )
-
-        resp: twitchio.MultiSubscribePayload = await self.multi_subscribe(subs)
-        for payload in subs:
-            owner_id = _subscription_owner(payload)
-            debug_print("AutoBot", f"Subscribed to: {payload.__class__.__name__} for user: {owner_id}")
-        if resp.errors:
-            for error in resp.errors:
-                owner_id = _subscription_owner(error.subscription)
-                debug_print("AutoBot", f"Failed to subscribe to: {error} for user: {owner_id}")
+        await self._subscribe_broadcaster_events(payload.user_id, reason="oauth")
 
     async def add_token(self, token: str, refresh: str) -> twitchio.authentication.ValidateTokenPayload:
         resp: twitchio.authentication.ValidateTokenPayload = await super().add_token(token, refresh)
@@ -215,6 +320,7 @@ class Bot(commands.AutoBot):
     
     async def event_ready(self) -> None:
         debug_print("AutoBot", f"Bot is ready. Logged in as: {self.bot_id}")
+        await self.ensure_startup_subscriptions()
 
     async def load_commands(self) -> None:
         self.custom_commands = await get_all_commands()
