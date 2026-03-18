@@ -1389,6 +1389,14 @@ def start_timer_manager_in_background():
                 print(f"[WARN] Failed to set assistant names on loop: {e}")
                 return False
             try:
+                reset_fut = asyncio.run_coroutine_threadsafe(
+                    obs_manager.restore_tts_display_placeholder(disable_source=True),
+                    loop,
+                )
+                reset_fut.result(timeout=8)
+            except Exception as e:
+                print(f"[WARN] Failed to reset OBS TTS placeholder on startup: {e}")
+            try:
                 asyncio.run_coroutine_threadsafe(timer_manager.start_timer(), loop)
             except Exception as e:
                 print(f"[WARN] Failed to start ResponseTimer on loop: {e}")
