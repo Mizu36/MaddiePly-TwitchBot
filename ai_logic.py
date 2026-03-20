@@ -60,6 +60,43 @@ class AssistantManager():
     async def generate_chat_response(self, messages: list) -> None:
         """Gathers messages and context and generates a response from chatgpt"""
         debug_print("Assistant", f"Generating chat response with messages: {messages}")
+
+        def _clean_chat_excerpt(raw_messages: list) -> str:
+            """Normalize message payloads so GPT sees speaker + message, not timestamps.
+
+            Supports legacy string payloads shaped like:
+            '<username>: <message> | <timestamp>'
+            and newer dict payloads like:
+            {'user': ..., 'text': ..., 'time': ...}
+            """
+            cleaned: list[str] = []
+            for item in raw_messages or []:
+                user = ""
+                text = ""
+                if isinstance(item, dict):
+                    user = str(item.get("user") or "").strip()
+                    text = str(item.get("text") or "").strip()
+                else:
+                    text = str(item or "").strip()
+                    if not text:
+                        continue
+                    # Remove trailing timestamp segment from legacy payloads.
+                    if " | " in text:
+                        text = text.rsplit(" | ", 1)[0].strip()
+                    # Preserve leading username from legacy payloads.
+                    if ":" in text:
+                        maybe_user, maybe_msg = text.split(":", 1)
+                        if maybe_user.strip() and maybe_msg.strip():
+                            user = maybe_user.strip()
+                            text = maybe_msg.strip()
+
+                if text:
+                    if user:
+                        cleaned.append(f"{user}: {text}")
+                    else:
+                        cleaned.append(text)
+            return "\n".join(cleaned)
+
         screenshot_result = None
         if not self.obs:
             self.obs = get_reference("OBSManager")
@@ -77,7 +114,7 @@ class AssistantManager():
                     screenshot_result = asyncio.create_task(analysis_fn(output_path))
                 else:
                     screenshot_result = asyncio.create_task(asyncio.to_thread(analysis_fn, output_path))
-        messages_str = "\n".join(messages)
+        messages_str = _clean_chat_excerpt(messages)
         dictated_context = None
         if await get_setting("Include STT Context", False):
             try:
@@ -92,7 +129,7 @@ class AssistantManager():
         if not self.twitch_bot:
             self.twitch_bot = get_reference("TwitchBot")
         game = await self.twitch_bot.get_current_game()
-        speech_part = f"ModdiPly's last ten seconds of speech: {dictated_context}. " if dictated_context else ""
+        speech_part = f"Broadcaster's last ten seconds of speech: {dictated_context}. " if dictated_context else ""
         screenshot_part = f"Description of whats currently on stream (single-frame): {screenshot_result}" if screenshot_result else ""
         prompt = {"role": "user", "content": f"Twitch Chat Messages:\n{messages_str}\n\nTwitch Stream Context: The game currently being played is {game}.\n{speech_part}\n{screenshot_part}."}
         response_prompt = await get_prompt("Message Response Prompt")
@@ -898,8 +935,7 @@ class ResponseTimer():
         if not self.timer_task or self.timer_task.done():
             debug_print("ResponseTimer", "Received message while timer is not running; ignoring chat line.")
             return
-        full_message = f"{user_name}: {text} | {time}"
-        self.received_messages.append(full_message)
+        self.received_messages.append({"user": user_name, "text": text, "time": time})
         self.message_count += 1
 
 class AutoMod():
